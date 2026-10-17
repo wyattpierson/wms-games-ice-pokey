@@ -1,13 +1,13 @@
 import type Phaser from 'phaser';
 import { ACTION_KEYS } from '../../config/bindings';
 import {
-  CHECK_SLOW, GOALIE_RADIUS, MOVE_COOLDOWN,
-  PERFECT_SHOT_CHARGE, PLAYER_RADIUS, TUMBLE_TIME, WHIFF_TIME,
+  CHECK_SLOW, GOALIE_RADIUS, HP_REGEN_RATE, MOVE_COOLDOWN,
+  PARRY_CONE_HALF, PARRY_RANGE, PERFECT_SHOT_CHARGE, PLAYER_RADIUS, TUMBLE_TIME, WHIFF_TIME,
 } from '../../config/gameplay';
 import type { AIPlan } from '../../core/aiPlan';
 import { ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
 import { clamp, len, v, type Vec2 } from '../../core/vec2';
-import { dashSpeedAt, MOVE_DEFS, type MoveId } from '../../core/moves';
+import { dashHeading, dashSpeedAt, MOVE_DEFS, sideAwayFrom, type MoveId } from '../../core/moves';
 import { guardRadiusFor, stuffRangeFor } from '../../core/stats';
 import type { HockeyStats } from '../../core/stats';
 
@@ -54,6 +54,9 @@ export interface ShotCue {
   progress: number;
   openAt: number;
   inWindow: boolean;
+  /** Label while the window is open (default "SHOOT!"; one-timers say "ONE-TIMER!"). */
+  label?: string;
+  color?: number;
 }
 
 export interface TellHint {
@@ -61,6 +64,8 @@ export interface TellHint {
   window: number;
   /** Show the key letter in the badge. */
   showKey: boolean;
+  /** Is the watching defender inside the carrier's parry cone? (colours the cone white / red) */
+  inCone: boolean;
 }
 
 export interface PlayerVisual {
@@ -84,8 +89,13 @@ export class Player {
   facing = 0;
 
   hp: number;
-  down = false;
+  hpRegenWait = 0; // s until HP starts to regenerate
+  down = false; // knocked out (0 HP): lies on the ice for DOWN_TIME, then stands up with full HP
   downTimer = 0;
+  /** Opponents already hit by THIS check stance (one hit per target per stance). */
+  checkHit = new Set<Player>();
+  sinceReceive = 99; // s since this player caught a pass (one-timer grace)
+  receivedByPass = false;
 
   carrying = false;
   charging = false;
@@ -104,8 +114,10 @@ export class Player {
   // Check (block) stance
   guardT = 0; // >0 while planted as a wall
   // Dash (the landed half of a skill move): velocity is HELD along dashDir for the effect phase
-  dashDir: Vec2 | null = null;
+  dashDir: Vec2 | null = null; // current heading of the dash (updated each frame; a curve for Spin)
+  dashAim = 0; // the aim angle the dash heading is measured from
   dashSpeed = 0; // px/s at the start of the dash (already × skill)
+  moveSide: 1 | -1 = 1; // which way this move goes (away from the nearest defender, picked at tell start)
   speedScale = 1; // AI speed multiplier (difficulty / teammate factor); ignored for the controlled player
   // Whiff / knockback tumble (visual + brief stagger)
   stagger = 0;
@@ -114,6 +126,8 @@ export class Player {
   pickupCooldown = 0;
   whiffCooldown = 0; // flailed at a fast puck; can't re-grab it for a moment
   saveCooldown = 0;
+  goalieSeq = -1; // (goalie AI) which launch it is currently reacting to
+  goalieReactAt: number | null = null; // (goalie AI) game-time at which it commits to a shot it has seen
   checkCd = 0;
   decideTimer = 1;
 
@@ -207,8 +221,9 @@ export class Player {
    * `tellScale` stretches the tell on top of the player's own Special-Attack
    * scaling (the AI passes its difficulty's aiTellScale here).
    */
-  startMove(id: MoveId, tellScale = 1): boolean {
+  startMove(id: MoveId, tellScale = 1, threat: Vec2 | null = null): boolean {
     if (!this.canStartMove()) return false;
+    this.moveSide = sideAwayFrom(this.facing, this.pos, threat);
     this.move = id;
     this.moveT = 0;
     this.moveResolved = false;
@@ -259,7 +274,8 @@ export class Player {
       if (this.move === 'spin') {
         a += Math.pow(t, 1.4) * Math.PI * 2; // winds up in a full, accelerating circle (the puck orbits you)
       } else {
-        a += Math.sin(this.moveT * 38) * 0.75 * t; // quick side-to-side feint
+        // quick side-to-side feint, biased toward the FAKE side (the cut goes the other way)
+        a += Math.sin(this.moveT * 38) * 0.5 * t - this.moveSide * 0.6 * t;
       }
     }
     return a;
@@ -311,6 +327,18 @@ export class Player {
     this.checkCd = Math.max(0, this.checkCd - dt);
     this.guardT = Math.max(0, this.guardT - dt);
     this.cueBurst = Math.max(0, this.cueBurst - dt);
+    this.sinceReceive += dt;
+    if (this.down) {
+      this.downTimer -= dt;
+      if (this.downTimer <= 0) {
+        this.down = false; // stand up with full health
+        this.hp = this.def.stats.maxHp;
+        this.stagger = 0.2;
+      }
+    } else if (this.hp < this.def.stats.maxHp) {
+      this.hpRegenWait -= dt;
+      if (this.hpRegenWait <= 0) this.hp = Math.min(this.def.stats.maxHp, this.hp + HP_REGEN_RATE * dt);
+    }
     this.decideTimer -= dt;
 
     // Move lifecycle: tell (scene watches for parries) → effect → done.
@@ -323,9 +351,12 @@ export class Player {
       if (this.moveT >= this.tellDur + this.effectDur) this.move = null;
     }
     // Dash: override whatever input/friction did to velocity this frame.
-    if (this.dashing && this.dashDir) {
+    if (this.dashing && this.move) {
       const ph = (this.moveT - this.tellDur) / this.effectDur;
       const sp = dashSpeedAt(this.dashSpeed, ph);
+      // Spin's heading sweeps round a curve; Deke's is a constant cut angle (core/moves.ts).
+      const h = dashHeading(MOVE_DEFS[this.move], this.dashAim, this.moveSide, ph);
+      this.dashDir = v(Math.cos(h), Math.sin(h));
       this.vel = v(this.dashDir.x * sp, this.dashDir.y * sp);
     } else if (!this.move) {
       this.dashDir = null;
@@ -345,11 +376,14 @@ export class Player {
     this.pos.y = clamp(this.pos.y, ICE_Y + r, ICE_Y + RINK_H - r);
 
     this.container.setPosition(this.pos.x, this.pos.y);
+    this.container.setAlpha(this.down ? 0.45 : 1);
 
     // Tumble: wobble-rotate the whole body (whiff / knocked back by a juke).
     if (this.tumble > 0) {
       const k = this.tumble / TUMBLE_TIME;
       this.container.rotation = Math.sin((TUMBLE_TIME - this.tumble) * 14) * 0.45 * k;
+    } else if (this.down) {
+      this.container.rotation = Math.PI / 2; // lying on the ice
     } else if (this.dashing && this.move === 'spin') {
       // Spin: the whole body does one full pirouette through the dash.
       const ph = Math.min(1, (this.moveT - this.tellDur) / this.effectDur);
@@ -369,7 +403,8 @@ export class Player {
       this.img.y = -2 - (sp > 24 ? Math.abs(Math.sin(this.bobT * 0.09)) * 3 : 0);
       // Deke wind-up: the body sways side to side, growing as the cut nears.
       const dekeTell = this.move === 'deke' && this.moveT < this.tellDur;
-      this.img.x = dekeTell ? Math.sin(this.moveT * 24) * 6 * (this.moveT / this.tellDur) : 0;
+      // …and leans toward the FAKE side (the opposite of where the cut will go).
+      this.img.x = dekeTell ? Math.sin(this.moveT * 24) * 4 * (this.moveT / this.tellDur) - this.moveSide * 9 * (this.moveT / this.tellDur) : 0;
     }
 
     this.draw();
@@ -547,18 +582,46 @@ export class Player {
     } else if (this.shotCue) {
       // The enemy is charging a shot: the goalie shows the release window.
       cue = {
-        color: 0xffd166,
+        color: this.shotCue.color ?? 0xffd166,
         progress: this.shotCue.progress,
         openAt: this.shotCue.openAt,
         inWindow: this.shotCue.inWindow,
         shape: 'circle',
         badge: 'none',
-        label: this.shotCue.inWindow ? 'SHOOT!' : null,
+        label: this.shotCue.inWindow ? (this.shotCue.label ?? 'SHOOT!') : null,
         labelScale: 1.25,
         badgeY: -(r + 46),
       };
     }
     this.drawCue(g, r, cue);
+
+    // Parry cone: while a human defender watches a tell, show where a parry counts
+    // (white = you're inside it, red = you're not — move into the front!).
+    if (telling && this.tellHint) {
+      const col = this.tellHint.inCone ? 0xffffff : 0xff6b6b;
+      const a0 = this.facing - PARRY_CONE_HALF;
+      const a1 = this.facing + PARRY_CONE_HALF;
+      g.fillStyle(col, 0.1);
+      g.slice(0, 2, PARRY_RANGE, a0, a1, false);
+      g.fillPath();
+      g.lineStyle(2, col, 0.55);
+      g.beginPath();
+      g.moveTo(0, 2);
+      g.lineTo(Math.cos(a0) * PARRY_RANGE, 2 + Math.sin(a0) * PARRY_RANGE);
+      g.arc(0, 2, PARRY_RANGE, a0, a1, false);
+      g.lineTo(0, 2);
+      g.strokePath();
+    }
+
+    // Health bar (only once hurt).
+    const maxHp = this.def.stats.maxHp;
+    if (!this.down && this.hp < maxHp - 0.5) {
+      const frac = Math.max(0, this.hp / maxHp);
+      g.fillStyle(0x000000, 0.55);
+      g.fillRect(-18, -47, 36, 7);
+      g.fillStyle(frac > 0.5 ? 0x66ff99 : frac > 0.25 ? 0xffd166 : 0xff6b6b, 1);
+      g.fillRect(-17, -46, 34 * frac, 5);
+    }
 
     const a = this.stickAngle();
     const dx = Math.cos(a);

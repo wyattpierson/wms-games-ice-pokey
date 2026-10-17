@@ -39,6 +39,10 @@ export const SHOT_RANGE = 290; // AI shoots when closer than this to the goal
 // Goalie
 export const GOALIE_SAVE_RADIUS = 34;
 export const GOALIE_SAVE_COOLDOWN = 0.6;
+// Goalie AI: play the angle (stand between puck and goal centre), read the shot, then dive.
+export const GOALIE_DEPTH = 90; // px "arc depth": shading = depth / puck distance from the goal line
+export const GOALIE_DIVE_FACTOR = 1.35; // skating-speed multiplier while diving at a shot
+export const GOALIE_SHOT_SPEED = 260; // puck speed at which it counts as a shot to react to
 export const GOALIE_SAVE_DEFLECT_SPEED = 230;
 
 // Match
@@ -59,6 +63,7 @@ export const WHIFF_TIME = 0.5; // stagger after a failed parry
 export const MOVE_COOLDOWN = 1.2; // s between skill moves (on top of tell+effect)
 export const TELL_STEER = 0.45; // speed factor while winding up a move (you can still shuffle + aim the burst)
 export const PARRY_RANGE = 62; // defender must be this close to parry/stuff a carrier
+export const PARRY_CONE_HALF = 1.05; // rad (≈60°): a parry only counts from IN FRONT of the carrier (± this off its facing)
 export const COUNTER_BURST = 330; // px/s a successful parry launches the defender
 export const TUMBLE_TIME = 0.5; // s of tumble anim after a whiff / knockback
 
@@ -70,6 +75,14 @@ export const PERFECT_SHOT_MULT = 1.18;
 // you get OVERCHARGE_GRACE seconds at full, then the charge bleeds away at
 // OVERCHARGE_DECAY per second (dropping back under PERFECT_SHOT_CHARGE ends the window).
 // Set OVERCHARGE_GRACE very large to get the old "holding is never worse" behaviour.
+// ONE-TIMER: a shot right off a pass. While a pass is arriving, a Shoot press inside
+// the window arms an instant, full-power shot that leaves the moment the puck touches
+// the blade (a pre-/post-catch press both count). No wind-up → the goalie reads it late.
+export const ONE_TIMER_LEAD = 0.45; // s before arrival the window opens
+export const ONE_TIMER_GRACE = 0.18; // s after receiving that a press still counts
+export const ONE_TIMER_MULT = 1.35; // shot speed multiplier (a perfect shot is 1.18) — instant AND hard
+export const ONE_TIMER_RING_TIME = 0.9; // s of ring travel shown to the receiver
+export const ONE_TIMER_REACT_MULT = 2.8; // the goalie reacts this much slower to one
 export const OVERCHARGE_GRACE = 0.15;
 export const OVERCHARGE_DECAY = 2.0;
 
@@ -85,6 +98,16 @@ export const CHARGE_SKATE = 0.6; // speed factor for left/right skating while ch
 export const CHECK_TIME = 0.55; // s the stance lasts
 export const CHECK_COOLDOWN = 1.1; // s before the next check
 export const CHECK_SLOW = 0.2; // speed factor while planted
+// A check also HITS: an opponent who runs into the planted wall (or is within reach
+// when the check is pressed) and isn't mid-move gets knocked back, stunned and damaged.
+export const CHECK_HIT_REACH = 14; // px beyond the wall radius that a freshly-pressed check strikes
+export const CHECK_RUNIN_MIN = 40; // px/s of closing speed that counts as "running into" the wall
+export const CHECK_KNOCK = 300; // px/s knock-back (× impact)
+export const CHECK_HIT_STAGGER = 0.28; // s stun (× impact)
+export const CHECK_DAMAGE_BASE = 10; // HP at 0 Defense…
+export const CHECK_DAMAGE_PER_DEF = 16; // …+ this × normalised Defense; × impact (0.6–1.5 by closing speed)
+export const HP_REGEN_DELAY = 3; // s without damage before HP starts to come back
+export const HP_REGEN_RATE = 3; // HP per second once it does
 export const CHECK_RADIUS_BASE = 30; // wall radius at 0 Defense…
 export const CHECK_RADIUS_PER_DEF = 14; // …+ this × normalised Defense
 export const CHECK_STUFF_REACH = 32; // a juke resolving within wall radius + this is stuffed (≥ PARRY_RANGE even at 0 Defense)

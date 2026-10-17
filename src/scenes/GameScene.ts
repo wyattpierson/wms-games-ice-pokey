@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import {
-  AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_COOLDOWN, CHECK_TIME, COUNTER_BURST,
+  AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_COOLDOWN, CHECK_DAMAGE_BASE, CHECK_DAMAGE_PER_DEF,
+  CHECK_HIT_REACH, CHECK_HIT_STAGGER, CHECK_KNOCK, CHECK_RUNIN_MIN, CHECK_TIME, DOWN_TIME, HP_REGEN_DELAY,
+  ONE_TIMER_GRACE, ONE_TIMER_LEAD, ONE_TIMER_MULT, ONE_TIMER_RING_TIME, PARRY_CONE_HALF, SHOT_RANGE, COUNTER_BURST,
   DROP_TIME, GOALIE_SAVE_COOLDOWN, GOALIE_SAVE_DEFLECT_SPEED,
   GOALIE_SAVE_RADIUS, GOALS_TO_WIN, GOAL_PAUSE, PARRY_RANGE, PASS_SPEED, PICKUP_DELAY,
   PICKUP_RADIUS, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT, SHOT_SPEED_MAX,
@@ -12,9 +14,11 @@ import { CENTER_X, CENTER_Y, GAME_HEIGHT, ICE_X, RINK_W } from '../config/rink';
 import { OPPONENTS, USER_TEAM, type Team } from '../config/teams';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
-import { ALL_MOVES, dashSpeedAt, MOVE_DEFS, parryTiming, windowSeconds, type MoveId } from '../core/moves';
+import {
+  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, MOVE_DEFS, parryTiming, windowSeconds, type MoveId,
+} from '../core/moves';
 import { deriveStats } from '../core/stats';
-import { stepAI, type AIWorld } from '../gameplay/ai';
+import { nearestThreat, stepAI, type AIWorld } from '../gameplay/ai';
 import { Controls } from '../gameplay/controls';
 import { Player } from '../gameplay/entities/Player';
 import { Puck } from '../gameplay/entities/Puck';
@@ -40,6 +44,8 @@ export class GameScene extends Phaser.Scene {
   private controlled: Player | null = null;
   private aimG!: Phaser.GameObjects.Graphics; // shot-aim reticle + guide
   private trailTick = 0;
+  private clock = 0; // seconds of live play
+  private oneTimerArmed: { player: Player; until: number } | null = null; // a Shoot press made inside the one-timer window
   private manualPick: Player | null = null; // defender the user picked with SPACE (sticks until possession changes)
   private diff: Difficulty = difficultyAt(DEFAULT_LEVEL);
   private opponentIdx = 0;
@@ -78,7 +84,8 @@ export class GameScene extends Phaser.Scene {
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
         'Arrows / WASD move · SPACE pass / switch · hold SHIFT = shoot (↑/↓ aims, release when the goalie ring turns white)\n' +
-          'E Spin · F Deke   (defending: press the SAME key when the ring turns white) · SHIFT = CHECK (block, no steal) · R restart',
+          'E Spin · F Deke   (defending: press the SAME key when the ring turns white, from IN FRONT of them)\n' +
+          'SHIFT while defending = CHECK (hit + block, no steal) · pass, then press SHIFT as it arrives = ONE-TIMER · R restart',
         {
           fontFamily: 'monospace',
           fontSize: '13px',
@@ -128,6 +135,7 @@ export class GameScene extends Phaser.Scene {
   // ---------- live play ----------
 
   private updateLive(time: number, dt: number): void {
+    this.clock += dt;
     // 1. Who does the user control: the carrier on offense; on defense the
     //    nearest field player, until SPACE picks a different one — that pick
     //    STICKS (it used to be an index into a list re-sorted every frame, so
@@ -161,9 +169,11 @@ export class GameScene extends Phaser.Scene {
       // Charging a shot locks you onto the goal: Up/Down slides the aim along the
       // goal mouth instead of skating you up/down; Left/Right still skate (slower).
       const wantsCharge = c.carrying && this.controls.held('shoot') && !committed && c.stagger <= 0;
+      // Same lock once a one-timer is ARMED: Up/Down picks the corner instead of skating you off the pass.
+      const armedOneTimer = this.oneTimerArmed?.player === c && !c.carrying;
       let moveDir = dir;
       let moveFactor = 1;
-      if (wantsCharge) {
+      if (wantsCharge || armedOneTimer) {
         moveDir = dir.x ? v(Math.sign(dir.x), 0) : v();
         moveFactor = CHARGE_SKATE;
       }
@@ -176,7 +186,10 @@ export class GameScene extends Phaser.Scene {
       } else if (moveDir.x || moveDir.y) c.applyInput(moveDir, dt, moveFactor);
       else c.coast(dt);
 
-      if (c.carrying) {
+      if (c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE && !committed && this.controls.justPressed('shoot')) {
+        // ONE-TIMER (press just after catching the pass): fires instantly, aimed by the held Up/Down.
+        this.fireOneTimer(c, clamp(dir.y, -1, 1));
+      } else if (c.carrying) {
         // Offense: pass, charge-shot (release inside the window = perfect), juke (E/F).
         if (this.controls.justPressed('pass') && !committed) this.userPass(c);
         if (wantsCharge) {
@@ -203,7 +216,7 @@ export class GameScene extends Phaser.Scene {
           c.aimY = 0;
         }
         for (const id of ALL_MOVES) {
-          if (!c.move && this.controls.justPressed(id)) c.startMove(id);
+          if (!c.move && this.controls.justPressed(id)) c.startMove(id, 1, nearestThreat(c, this.players));
         }
       } else {
         // Defense: check (Shift/Enter), parry (E/F = the move's key).
@@ -212,7 +225,14 @@ export class GameScene extends Phaser.Scene {
           c.charge = 0;
           c.holdT = 0;
         }
-        if (this.controls.justPressed('shoot')) this.doCheck(c);
+        const pressed = this.controls.justPressed('shoot');
+        const inc = this.incomingPass(c);
+        if (inc) {
+          // A pass is on its way to ME: Shoot arms a one-timer (it never plants a check).
+          if (pressed && inc.eta <= ONE_TIMER_LEAD) {
+            this.oneTimerArmed = { player: c, until: this.clock + ONE_TIMER_LEAD + 0.3 };
+          }
+        } else if (pressed) this.doCheck(c);
         for (const id of ALL_MOVES) {
           if (this.controls.justPressed(id)) this.tryParry(c, id);
         }
@@ -230,7 +250,21 @@ export class GameScene extends Phaser.Scene {
           inWindow: c.charge >= PERFECT_SHOT_CHARGE,
         };
       }
-      this.drawAim(c);
+      // One-timer cue on the RECEIVER: a ring shrinks as the pass arrives; white = shoot now.
+      const ringOpen = 1 - ONE_TIMER_LEAD / ONE_TIMER_RING_TIME;
+      const inc2 = c.carrying ? null : this.incomingPass(c);
+      if (inc2) {
+        c.shotCue = {
+          progress: clamp(1 - inc2.eta / ONE_TIMER_RING_TIME, 0, 1),
+          openAt: ringOpen,
+          inWindow: inc2.eta <= ONE_TIMER_LEAD,
+          label: 'ONE-TIMER!',
+          color: 0x7bdff2,
+        };
+      } else if (c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE) {
+        c.shotCue = { progress: 1, openAt: ringOpen, inWindow: true, label: 'ONE-TIMER!', color: 0x7bdff2 };
+      }
+      this.drawAim(c, dir.y);
     } else {
       this.aimG.clear();
       for (const p of this.players) p.shotCue = null;
@@ -274,12 +308,14 @@ export class GameScene extends Phaser.Scene {
       oppCarrier.tellHint = {
         window: windowSeconds(oppCarrier.tellDur, this.controlled.stats.parryFrac),
         showKey: this.diff.showKeyHint,
+        inCone: inFrontCone(oppCarrier.facing, oppCarrier.pos, this.controlled.pos, PARRY_CONE_HALF),
       };
     }
 
     for (const p of this.players) {
       p.aiChase = p === chaserOf[0] || p === chaserOf[1];
-      p.speedScale = p.team === 1 ? this.diff.aiSpeed : AI_SPEED_FACTOR;
+      // Difficulty slows opposing SKATERS; goalies keep (nearly) full speed — a slowed goalie just gives the net away.
+      p.speedScale = p.isGoalie ? (p.team === 1 ? this.diff.aiGoalieSpeed : 1) : p.team === 1 ? this.diff.aiSpeed : AI_SPEED_FACTOR;
       if (p !== this.controlled) stepAI(p, world);
       p.update(dt, this.puck.pos);
     }
@@ -320,6 +356,11 @@ export class GameScene extends Phaser.Scene {
       }
     }
     if (!best) return;
+    // An armed one-timer doesn't need a clean catch: the swing redirects it.
+    if (this.oneTimerArmed?.player === best && this.puck.pass?.to === best) {
+      this.grantPuck(best);
+      return;
+    }
     const sp = len(this.puck.vel);
     if (sp < FAST_PUCK_SPEED) {
       // Slow puck: it's yours.
@@ -335,9 +376,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   private grantPuck(p: Player): void {
+    const pass = this.puck.pass;
+    const viaPass = !!pass && pass.to === p && pass.from.team === p.team;
     this.puck.give(p);
     p.pickupCooldown = PICKUP_DELAY;
     this.puck.lastTaker = p;
+    p.receivedByPass = viaPass;
+    p.sinceReceive = 0;
+    const armed = this.oneTimerArmed;
+    if (armed && armed.player !== p) this.oneTimerArmed = null; // someone else got it
+    if (!viaPass) return;
+    if (armed && armed.player === p && this.clock <= armed.until) {
+      // The shot leaves the instant the puck touches the blade.
+      this.fireOneTimer(p, p === this.controlled ? clamp(this.controls.direction().y, -1, 1) : 0);
+    } else if (p !== this.controlled && !p.isGoalie) {
+      // AI receivers one-time it sometimes, if they're in range.
+      const goalX = p.team === 0 ? ICE_X + RINK_W : ICE_X;
+      if (Math.abs(p.pos.x - goalX) < SHOT_RANGE + 80 && Math.random() < this.diff.aiOneTimerRate) {
+        this.fireOneTimer(p, (Math.random() * 2 - 1) * this.diff.aiShotSpread);
+      }
+    }
   }
 
   private goalieSaves(): void {
@@ -368,6 +426,7 @@ export class GameScene extends Phaser.Scene {
       for (let j = i + 1; j < this.players.length; j++) {
         const a = this.players[i];
         const b = this.players[j];
+        if (a.down || b.down) continue; // players on the ice don't block
         // A dashing carrier slips past the defender it just juked (who is stunned).
         if ((a.dashing && b.team !== a.team && b.stagger > 0) || (b.dashing && a.team !== b.team && a.stagger > 0)) continue;
         const d = dist(a.pos, b.pos);
@@ -405,6 +464,8 @@ export class GameScene extends Phaser.Scene {
         o.pos = add(g.pos, scale(n, R));
         const into = dot(o.vel, n);
         if (into < 0) o.vel = sub(o.vel, scale(n, into));
+        // Running into a planted defender costs you (unless you're mid-move: that's parry/stuff territory).
+        if (into < -CHECK_RUNIN_MIN && !o.move) this.checkHit(g, o, -into);
       }
     }
   }
@@ -440,14 +501,35 @@ export class GameScene extends Phaser.Scene {
     const flight = (d / speed) * 0.75;
     const lead = v(to.pos.x + to.vel.x * flight, to.pos.y + to.vel.y * flight);
     this.puck.launch(norm(sub(lead, from.pos)), speed, from);
+    this.puck.pass = { from, to }; // in flight: lets the receiver time a one-timer
+    // Control follows the pass: you become the receiver (so you can one-time it).
+    if (from.team === 0 && !to.isGoalie) this.manualPick = to;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.25);
+  }
+
+  /** A pass to `c` that is still in flight and heading at them (eta = seconds until it reaches their stick). */
+  private incomingPass(c: Player): { eta: number } | null {
+    const pa = this.puck.pass;
+    if (!pa || pa.to !== c || this.puck.state !== 'loose') return null;
+    const sp = len(this.puck.vel);
+    if (sp < 120) return null;
+    const to = sub(c.pos, this.puck.pos);
+    if (dot(this.puck.vel, to) <= 0) return null; // already past / not heading at them
+    return { eta: Math.max(0, (len(to) - PICKUP_RADIUS) / sp) };
+  }
+
+  /** Instant, full-power shot (no wind-up). The goalie reads it late (puck.quick). */
+  private fireOneTimer(p: Player, aimY: number): void {
+    p.receivedByPass = false;
+    this.oneTimerArmed = null;
+    this.shootPuck(p, aimY, 1, true);
   }
 
   /**
    * Shoot at a point on the goal mouth (`aimY` −1 top post … +1 bottom post;
    * beyond ±1 is wide — only the AI does that). See core/shot.ts.
    */
-  private shootPuck(from: Player, aimY: number, charge: number): void {
+  private shootPuck(from: Player, aimY: number, charge: number, quick = false): void {
     const goalX = from.team === 0 ? ICE_X + RINK_W : ICE_X;
     // Aim from where the PUCK is (it sits on the blade, off to one side of the
     // player) — aiming from the player's centre put full-corner shots on the post.
@@ -455,14 +537,16 @@ export class GameScene extends Phaser.Scene {
     const aim = shotDirection(origin, goalX, aimY);
     // Perfect shot: release with charge in the perfect window (the goalie's
     // ring/flash is the tell) → bonus power and a “!” over the shooter.
-    const perfect = from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
+    const perfect = !quick && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
-      from.stats.shotPower * (perfect ? PERFECT_SHOT_MULT : 1);
+      from.stats.shotPower * (quick ? ONE_TIMER_MULT : perfect ? PERFECT_SHOT_MULT : 1);
     this.puck.launch(aim, speed, from);
+    this.puck.quick = quick;
     from.stickSwing = 0.3;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.15);
     if (perfect) this.popup('!', from.pos, '#ffffff');
+    if (quick) this.popup('ONE-TIMER!', from.pos, '#7bdff2', 24);
   }
 
   // ---------- juke moves & defense (parry layer) ----------
@@ -474,12 +558,18 @@ export class GameScene extends Phaser.Scene {
    * Pressing with no active tell = harmless stick tap.
    */
   private tryParry(d: Player, id: MoveId): void {
-    if (d.stagger > 0 || d.guardT > 0) return;
+    if (d.stagger > 0 || d.guardT > 0 || d.down) return;
     const carrier = this.puck.state === 'carried' ? this.puck.carriedBy : null;
     if (!carrier || carrier.team === d.team || !carrier.move || dist(d.pos, carrier.pos) > PARRY_RANGE) {
       // Harmless stick tap (no tell to react to); tiny cooldown vs. mash.
       d.stickSwing = 0.25;
       d.moveCd = Math.max(d.moveCd, 0.3);
+      return;
+    }
+    // A parry only counts from IN FRONT of the carrier (the cone is drawn on the tell).
+    if (!inFrontCone(carrier.facing, carrier.pos, d.pos, PARRY_CONE_HALF)) {
+      d.whiff();
+      this.popup('NOT IN FRONT', d.pos, '#ff9e9e', 18);
       return;
     }
     const timing = parryTiming(carrier.tellDur, carrier.moveT, d.stats.parryFrac);
@@ -515,6 +605,62 @@ export class GameScene extends Phaser.Scene {
     d.guardT = CHECK_TIME;
     d.stickSwing = 0.3;
     d.vel = scale(d.vel, 0.3); // plant
+    d.checkHit.clear();
+    // The check also STRIKES anyone already in reach who isn't mid-move (a move is
+    // answered by parry / stuff instead): knock-back, stun and damage.
+    const reach = d.guardRadius() + CHECK_HIT_REACH;
+    for (const o of this.players) {
+      if (o.team === d.team || o.isGoalie || o.down || o.move) continue;
+      if (dist(o.pos, d.pos) > reach) continue;
+      const n = norm(sub(o.pos, d.pos));
+      this.checkHit(d, o, Math.max(0, -dot(o.vel, n)));
+    }
+  }
+
+  /** One check connects: push the target back, stun them, hurt them. Once per target per stance. */
+  private checkHit(g: Player, o: Player, closing: number): void {
+    if (g.checkHit.has(o)) return;
+    g.checkHit.add(o);
+    const off = sub(o.pos, g.pos);
+    const n = len(off) > 1 ? norm(off) : v(g.team === 0 ? 1 : -1, 0);
+    const impact = clamp(0.6 + closing / 300, 0.6, 1.5);
+    const mult = g.team === 1 ? this.diff.aiCheckDamage : 1;
+    const dmg = (CHECK_DAMAGE_BASE + CHECK_DAMAGE_PER_DEF * g.stats.checkPower) * impact * mult;
+    o.vel = scale(n, CHECK_KNOCK * impact);
+    o.stagger = Math.max(o.stagger, CHECK_HIT_STAGGER * impact);
+    o.tumble = TUMBLE_TIME * 0.6;
+    o.guardT = 0;
+    o.charging = false;
+    o.charge = 0;
+    o.holdT = 0;
+    g.vel = scale(g.vel, 0.3);
+    this.popup(`-${Math.round(dmg)}`, o.pos, '#ff6b6b', 20);
+    this.damage(o, dmg);
+  }
+
+  private damage(o: Player, amount: number): void {
+    o.hp = Math.max(0, o.hp - amount);
+    o.hpRegenWait = HP_REGEN_DELAY;
+    if (o.hp <= 0 && !o.down) this.knockDown(o);
+  }
+
+  /** 0 HP: drop the puck and lie on the ice for DOWN_TIME, then stand up with full HP. */
+  private knockDown(p: Player): void {
+    p.down = true;
+    p.downTimer = DOWN_TIME;
+    p.move = null;
+    p.moveResolved = true;
+    p.charging = false;
+    p.charge = 0;
+    p.holdT = 0;
+    p.guardT = 0;
+    p.dashDir = null;
+    p.vel = scale(p.vel, 0.2);
+    if (this.puck.carriedBy === p) {
+      const ang = Math.random() * Math.PI * 2;
+      this.puck.launch(v(Math.cos(ang), Math.sin(ang)), 140, p);
+    }
+    this.popup('DOWN!', p.pos, '#ff6b6b', 26);
   }
 
   /**
@@ -542,35 +688,19 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    let dir = v(Math.cos(p.facing), Math.sin(p.facing));
-    if (p === this.controlled && id !== 'crossover') {
-      const aim = this.controls.direction();
-      if (aim.x || aim.y) {
-        dir = aim; // dash where you point
-        p.facing = Math.atan2(aim.y, aim.x);
-      }
+    // Aim = where you point at the end of the tell (else the way you face). The move
+    // then bends/cuts away from that aim: Spin curves round the defender, Deke cuts at
+    // an angle (see dashHeading) — to the side picked at tell start, away from the nearest defender.
+    let aimDir = v(Math.cos(p.facing), Math.sin(p.facing));
+    if (p === this.controlled) {
+      const inp = this.controls.direction();
+      if (inp.x || inp.y) aimDir = inp;
     }
-    if (id === 'crossover') {
-      // Sharp cut to the side AWAY from the nearest defender.
-      let threat: Player | null = null;
-      let td = Infinity;
-      for (const o of this.players) {
-        if (o.team === p.team || o.down) continue;
-        const d = dist(o.pos, p.pos);
-        if (d < td) {
-          td = d;
-          threat = o;
-        }
-      }
-      if (threat) {
-        const perp = v(-dir.y, dir.x);
-        const side = dot(sub(threat.pos, p.pos), perp) > 0 ? -1 : 1;
-        const nd = norm(add(dir, scale(perp, side * 1.6)));
-        p.facing = Math.atan2(nd.y, nd.x);
-        dir = nd;
-      }
-    }
-    // DASH: velocity is held along `dir` for the effect phase (see Player.update / dashSpeedAt).
+    p.dashAim = Math.atan2(aimDir.y, aimDir.x);
+    const h0 = dashHeading(def, p.dashAim, p.moveSide, 0);
+    const dir = v(Math.cos(h0), Math.sin(h0));
+    p.facing = h0;
+    // DASH: velocity is held along the (curving) heading for the effect phase (see Player.update / dashSpeedAt).
     p.dashDir = dir;
     p.dashSpeed = def.dash * p.stats.skill;
     p.vel = scale(dir, dashSpeedAt(p.dashSpeed, 0));
@@ -630,22 +760,33 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Aim reticle on the goal mouth + a dotted guide from the shooter while charging. */
-  private drawAim(c: Player): void {
+  /**
+   * Aim reticle on the goal mouth + a dotted guide. Shown while charging a shot AND
+   * during the one-timer window (where Up/Down held at the moment of the shot picks the corner).
+   */
+  private drawAim(c: Player, dirY: number): void {
     const g = this.aimG;
     g.clear();
-    if (!c.carrying || !c.charging) return;
+    let aimY: number;
+    let hot: boolean;
+    const inc = c.carrying ? null : this.incomingPass(c);
+    if (c.carrying && c.charging) {
+      aimY = c.aimY;
+      hot = c.charge >= PERFECT_SHOT_CHARGE;
+    } else if ((inc && inc.eta <= ONE_TIMER_LEAD) || (c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE)) {
+      aimY = clamp(dirY, -1, 1);
+      hot = true;
+    } else return;
     const gx = c.team === 0 ? ICE_X + RINK_W : ICE_X;
-    const ty = aimTargetY(c.aimY);
-    const inWin = c.charge >= PERFECT_SHOT_CHARGE;
-    const col = inWin ? 0xffffff : 0xffd166;
+    const ty = aimTargetY(aimY);
+    const col = hot ? 0xffffff : 0xffd166;
     const o = this.puck.state === 'carried' && this.puck.carriedBy === c ? this.puck.pos : c.pos;
     const dx = gx - o.x;
     const dy = ty - o.y;
     const n = Math.max(1, Math.floor(Math.hypot(dx, dy) / 22));
     g.fillStyle(col, 0.35);
     for (let i = 1; i < n; i++) g.fillCircle(o.x + (dx * i) / n, o.y + (dy * i) / n, 2.2);
-    const pulse = inWin ? 1 + 0.15 * Math.sin(this.time.now * 0.03) : 1;
+    const pulse = hot ? 1 + 0.15 * Math.sin(this.time.now * 0.03) : 1;
     g.lineStyle(3, col, 0.95);
     g.strokeCircle(gx, ty, 11 * pulse);
     for (const [ax, ay] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
@@ -718,7 +859,17 @@ export class GameScene extends Phaser.Scene {
       p.shotCue = null;
       p.holdT = 0;
       p.aimY = 0;
+      p.hp = p.stats.maxHp; // fresh legs at every faceoff
+      p.hpRegenWait = 0;
+      p.down = false;
+      p.downTimer = 0;
+      p.checkHit.clear();
+      p.receivedByPass = false;
+      p.sinceReceive = 99;
+      p.goalieReactAt = null;
+      p.dashDir = null;
     }
+    this.oneTimerArmed = null;
     this.puck.reset(CENTER_X, CENTER_Y);
     this.manualPick = null;
     if (this.controlled) this.controlled.setControlled(false);

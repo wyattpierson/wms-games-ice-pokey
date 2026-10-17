@@ -9,7 +9,9 @@
  * the difficulty level (config/difficulty.ts).
  */
 
-import { PARRY_RANGE, SHOT_RANGE } from '../config/gameplay';
+import {
+  GOALIE_DEPTH, GOALIE_DIVE_FACTOR, GOALIE_SHOT_SPEED, ONE_TIMER_REACT_MULT, PARRY_RANGE, SHOT_RANGE,
+} from '../config/gameplay';
 import type { Difficulty } from '../config/difficulty';
 import {
   CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W,
@@ -19,6 +21,21 @@ import { ALL_MOVES, type MoveId } from '../core/moves';
 import { planAiResponse } from '../core/aiPlan';
 import type { Player } from './entities/Player';
 import type { Puck } from './entities/Puck';
+
+/** Position of the nearest opposing skater within `maxD` px (what a juke goes AWAY from), or null. */
+export function nearestThreat(p: Player, players: Player[], maxD = 170): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bd = maxD;
+  for (const e of players) {
+    if (e.team === p.team || e.isGoalie || e.down) continue;
+    const d = dist(e.pos, p.pos);
+    if (d < bd) {
+      bd = d;
+      best = e.pos;
+    }
+  }
+  return best;
+}
 
 /** An AI defender plants a check when a dribbling carrier is this close and heading at them. */
 const PRESSURE_RANGE = 70;
@@ -229,7 +246,7 @@ function stepCarrier(p: Player, w: AIWorld): void {
     td = Math.min(td, dist(e.pos, p.pos));
   }
   if (td < range && p.canStartMove() && w.rng() < w.diff.aiJukeRate * w.dt) {
-    if (p.startMove(ALL_MOVES[Math.floor(w.rng() * ALL_MOVES.length)], w.diff.aiTellScale)) {
+    if (p.startMove(ALL_MOVES[Math.floor(w.rng() * ALL_MOVES.length)], w.diff.aiTellScale, nearestThreat(p, w.players))) {
       p.moveCd *= w.diff.aiMoveCdScale; // easy levels juke more often (so you can practise defending)
     }
     p.coast(w.dt);
@@ -313,10 +330,45 @@ function stepGoalie(p: Player, w: AIWorld): void {
     return;
   }
 
-  // Stay on the goal line, mirror the puck vertically, hugging the net.
+  // Hug the goal line and play the ANGLE: stand between the puck and the centre of
+  // the net (shading toward the puck more the closer it is) instead of mirroring it,
+  // which left the far corner wide open. When a shot is launched, read where it will
+  // cross the line (after a stat-scaled reaction delay) and dive at it.
   const gx = p.team === 0 ? ICE_X + p.radius() + 4 : ICE_X + RINK_W - p.radius() - 4;
-  const ty = clamp(w.puck.pos.y, GOAL_TOP - 16, GOAL_BOTTOM + 16);
+  const goalX = p.team === 0 ? ICE_X : ICE_X + RINK_W;
+  const puck = w.puck;
+  const dx = Math.max(1, Math.abs(puck.pos.x - gx));
+  const shade = clamp(GOALIE_DEPTH / dx, 0.2, 0.9);
+  let ty = clamp(CENTER_Y + (puck.pos.y - CENTER_Y) * shade, GOAL_TOP - 6, GOAL_BOTTOM + 6);
+
+  const sp = len(puck.vel);
+  // A pass is not a shot. And a NEW launch restarts the reaction clock (otherwise the
+  // goalie would dive with zero delay on a one-timer that follows a pass).
+  if (puck.launchSeq !== p.goalieSeq) {
+    p.goalieSeq = puck.launchSeq;
+    p.goalieReactAt = null;
+  }
+  const incoming =
+    puck.state === 'loose' &&
+    !puck.pass &&
+    sp > GOALIE_SHOT_SPEED &&
+    puck.lastTaker?.team !== p.team &&
+    Math.sign(goalX - puck.pos.x) === Math.sign(puck.vel.x);
+  let dive = false;
+  if (incoming) {
+    if (p.goalieReactAt === null) {
+      const react = w.diff.aiGoalieReact * (1.25 - 0.5 * p.stats.puckSense) * (puck.quick ? ONE_TIMER_REACT_MULT : 1);
+      p.goalieReactAt = w.time * 0.001 + react;
+    }
+    if (w.time * 0.001 >= p.goalieReactAt) {
+      const t = (gx - puck.pos.x) / puck.vel.x;
+      ty = clamp(puck.pos.y + puck.vel.y * t, GOAL_TOP - 14, GOAL_BOTTOM + 14);
+      dive = true;
+    }
+  } else {
+    p.goalieReactAt = null;
+  }
   const d = v(gx - p.pos.x, ty - p.pos.y);
-  if (len(d) > 5) p.applyInput(norm(d), w.dt);
+  if (len(d) > 5) p.applyInput(norm(d), w.dt, dive ? GOALIE_DIVE_FACTOR : 1);
   else p.coast(w.dt);
 }

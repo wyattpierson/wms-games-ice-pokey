@@ -11,6 +11,7 @@
  */
 
 import { ENABLED_MOVES, PARRY_WINDOW_FLOOR } from '../config/gameplay';
+import type { Vec2 } from './vec2';
 
 export type MoveId = 'spin' | 'crossover' | 'deke';
 
@@ -28,17 +29,21 @@ export interface MoveDef {
   knockRadius: number;
   /** How long knocked-back defenders are stunned (real separation). */
   stagger: number;
+  /** Dash heading offset (rad, off the aim) at the START of the dash. Signed by the move's side. */
+  headFrom: number;
+  /** …and at the END. from ≠ to is a CURVE (Spin: swing out, curve back round); from = to is a straight CUT (Deke). */
+  headTo: number;
   /** Tell colour (readability layer; the badge SHAPE also differs per move). */
   color: number;
 }
 
 export const MOVE_DEFS: Record<MoveId, MoveDef> = {
   // Fast + cheap: short tell, modest payoff.
-  spin: { id: 'spin', tell: 0.3, effect: 0.22, dash: 720, knock: 260, knockRadius: 60, stagger: 0.3, color: 0xff9f1c },
+  spin: { id: 'spin', tell: 0.3, effect: 0.22, dash: 720, knock: 260, knockRadius: 60, stagger: 0.3, headFrom: 0.95, headTo: 0, color: 0xff9f1c },
   // Slow + big: long tell (easy to parry), the biggest payoff.
-  deke: { id: 'deke', tell: 0.5, effect: 0.28, dash: 880, knock: 340, knockRadius: 85, stagger: 0.45, color: 0xffd60a },
+  deke: { id: 'deke', tell: 0.5, effect: 0.28, dash: 880, knock: 340, knockRadius: 85, stagger: 0.45, headFrom: 0.8, headTo: 0.8, color: 0xffd60a },
   // Built but disabled (see ENABLED_MOVES).
-  crossover: { id: 'crossover', tell: 0.35, effect: 0.18, dash: 760, knock: 280, knockRadius: 55, stagger: 0.3, color: 0x4cc9f0 },
+  crossover: { id: 'crossover', tell: 0.35, effect: 0.18, dash: 760, knock: 280, knockRadius: 55, stagger: 0.3, headFrom: 0.9, headTo: 0.9, color: 0x4cc9f0 },
 };
 
 /** The moves currently in the game. */
@@ -76,4 +81,36 @@ export function movePhase(tell: number, effect: number, elapsed: number): 'tell'
 export function dashSpeedAt(dashSpeed: number, ph: number): number {
   const p = Math.max(0, Math.min(1, ph));
   return dashSpeed * (1 - 0.45 * p * p);
+}
+
+/**
+ * Heading (rad) of the dash `ph` (0..1) of the way through the effect phase.
+ *   Spin  → swings out sideways then CURVES back round (you wrap around the defender
+ *           and exit past them, still facing your aim);
+ *   Deke  → a straight line at a fixed angle off the aim (it fakes the other way, then
+ *           cuts — you exit angled off to the side).
+ * `side` is +1/−1 and is chosen to go AWAY from the nearest defender.
+ */
+export function dashHeading(def: MoveDef, aim: number, side: 1 | -1, ph: number): number {
+  const p = Math.max(0, Math.min(1, ph));
+  const smooth = p * p * (3 - 2 * p);
+  return aim + side * (def.headFrom + (def.headTo - def.headFrom) * smooth);
+}
+
+/** Which way to go (+1 = clockwise on screen / −1) so the move heads AWAY from `threat`. */
+export function sideAwayFrom(facing: number, pos: Vec2, threat: Vec2 | null): 1 | -1 {
+  if (!threat) return 1;
+  const cross = Math.cos(facing) * (threat.y - pos.y) - Math.sin(facing) * (threat.x - pos.x);
+  return cross > 0 ? -1 : 1;
+}
+
+/** Is `at` inside the cone of half-angle `half` centred on `facing` from `from`? (a point on top of `from` counts) */
+export function inFrontCone(facing: number, from: Vec2, at: Vec2, half: number): boolean {
+  const dx = at.x - from.x;
+  const dy = at.y - from.y;
+  if (dx * dx + dy * dy < 16) return true;
+  let d = Math.atan2(dy, dx) - facing;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return Math.abs(d) <= half;
 }

@@ -30,6 +30,14 @@ export interface Difficulty {
   aiJukeRange: number;
   /** Scales the AI carrier's move cooldown (lower = jukes more often). */
   aiMoveCdScale: number;
+  /** Goalie reaction time (s) to a shot, × a puckSense factor (one-timers are slower still). */
+  aiGoalieReact: number;
+  /** Goalie skating-speed multiplier (the goalie must NOT be crippled by low levels). */
+  aiGoalieSpeed: number;
+  /** Chance an AI who receives a pass in shooting range one-times it. */
+  aiOneTimerRate: number;
+  /** Damage multiplier for checks thrown BY the opposing team (so level 0 doesn't punish). */
+  aiCheckDamage: number;
   /** AI shot accuracy: aim is uniform in ±this × the goal mouth (>1 means it can shoot wide). */
   aiShotSpread: number;
   /** Show the key letter above a carrier's tell (learning aid; off at high levels). */
@@ -51,6 +59,10 @@ const EASY: Numeric = {
   aiJukeRange: 170,
   aiMoveCdScale: 0.6,
   aiShotSpread: 1.4,
+  aiGoalieReact: 0.2,
+  aiGoalieSpeed: 0.9,
+  aiOneTimerRate: 0.1,
+  aiCheckDamage: 0.6,
 };
 
 const HARD: Numeric = {
@@ -66,6 +78,10 @@ const HARD: Numeric = {
   aiJukeRange: 130,
   aiMoveCdScale: 1.0,
   aiShotSpread: 0.8,
+  aiGoalieReact: 0.14,
+  aiGoalieSpeed: 1.0,
+  aiOneTimerRate: 0.45,
+  aiCheckDamage: 1.0,
 };
 
 export const SHOW_KEY_HINT_BELOW_LEVEL = 0.7;

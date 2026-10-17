@@ -19,6 +19,12 @@ export class Puck {
   carriedBy: Player | null = null;
   lastTaker: Player | null = null;
   scoredBy: 0 | 1 | null = null; // which team scored (team 0 attacks right)
+  /** Set while a PASS is in flight: who threw it and who it is meant for (cleared on any pickup / shot). */
+  pass: { from: Player; to: Player } | null = null;
+  /** True for a one-timer: the goalie reads it late. */
+  quick = false;
+  /** Increments on every launch (pass or shot) — lets the goalie tell a NEW shot from the same one. */
+  launchSeq = 0;
 
   private body: Phaser.GameObjects.Ellipse;
   private shadow: Phaser.GameObjects.Ellipse;
@@ -37,6 +43,8 @@ export class Puck {
     this.carriedBy = null;
     this.lastTaker = null;
     this.scoredBy = null;
+    this.pass = null;
+    this.quick = false;
     this.place();
   }
 
@@ -47,6 +55,8 @@ export class Puck {
     this.carriedBy = p;
     p.carrying = true;
     this.vel = v();
+    this.pass = null;
+    this.quick = false;
   }
 
   /** Fire the puck loose (pass or shot). */
@@ -57,6 +67,9 @@ export class Puck {
     this.lastTaker = taker;
     this.scoredBy = null;
     this.vel = scale(dir, speed);
+    this.pass = null; // callers set it right after launching a pass
+    this.quick = false;
+    this.launchSeq += 1;
   }
 
   update(dt: number): void {

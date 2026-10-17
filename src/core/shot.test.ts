@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHARGE_TIME, OVERCHARGE_GRACE, PERFECT_SHOT_CHARGE } from '../config/gameplay';
+import { CHARGE_TIME, ONE_TIMER_MULT, OVERCHARGE_GRACE, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT } from '../config/gameplay';
 import { CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W } from '../config/rink';
 import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from './shot';
 import { v } from './vec2';
@@ -85,5 +85,11 @@ describe('aiming along the goal mouth', () => {
     expect(d.x).toBeGreaterThan(0);
     const e = shotDirection(v(ICE_X + RINK_W, CENTER_Y), ICE_X + RINK_W, 0);
     expect(Math.hypot(e.x, e.y)).toBeCloseTo(1, 6);
+  });
+});
+
+describe('one-timer power', () => {
+  it('is harder than a perfect charged shot (it is instant AND hard)', () => {
+    expect(ONE_TIMER_MULT).toBeGreaterThan(PERFECT_SHOT_MULT * 1.1);
   });
 });
