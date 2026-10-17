@@ -1,21 +1,27 @@
 /**
- * Dumb-but-legal AI for step 1: one chaser per team, the rest zone behind the
- * puck, carriers skate to the goal and shoot/pass on a decision timer, goalies
- * track the puck on the goal line and break out after a save.
- * Parry-aware AI behavior lands in build step 5.
+ * AI: one chaser per team, the rest zone behind the puck, carriers skate to the
+ * goal and shoot/pass on a decision timer, goalies track the puck.
+ *
+ * Defense vs a carrier is HONEST (see core/aiPlan.ts): when a tell starts the
+ * defender rolls a response — parry (can misread / mistime → whiffs), check
+ * (block), or nothing — and also plants checks in front of a carrier who is
+ * just dribbling at them, so jukes are the way past. Everything is scaled by
+ * the difficulty level (config/difficulty.ts).
  */
 
-import {
-  AI_CHECK_CHANCE, AI_MOVE_RANGE, AI_MOVE_RATE, AI_PARRY_BASE, AI_PARRY_PER_SPD,
-  PARRY_RANGE, SHOT_RANGE,
-} from '../config/gameplay';
+import { PARRY_RANGE, SHOT_RANGE } from '../config/gameplay';
+import type { Difficulty } from '../config/difficulty';
 import {
   CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W,
 } from '../config/rink';
-import { add, clamp, dist, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
-import { ALL_MOVES, MOVE_DEFS, effectiveWindow } from '../core/moves';
+import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
+import { ALL_MOVES, type MoveId } from '../core/moves';
+import { planAiResponse } from '../core/aiPlan';
 import type { Player } from './entities/Player';
 import type { Puck } from './entities/Puck';
+
+/** An AI defender plants a check when a dribbling carrier is this close and heading at them. */
+const PRESSURE_RANGE = 70;
 
 export interface AIWorld {
   players: Player[];
@@ -23,11 +29,12 @@ export interface AIWorld {
   dt: number;
   time: number;
   rng: () => number;
+  diff: Difficulty;
   pass: (from: Player, to: Player) => void;
   shoot: (from: Player, dir: Vec2, charge: number) => void;
-  /** AI parry attempt (matched key; timing can still be early → whiff). */
-  parry: (defender: Player, carrier: Player) => void;
-  /** AI check (safe push / dislodge). */
+  /** AI parry attempt with a specific key (it may be the wrong one, or badly timed). */
+  parry: (defender: Player, carrier: Player, key: MoveId) => void;
+  /** AI check (block stance). */
   check: (defender: Player) => void;
 }
 
@@ -60,41 +67,40 @@ export function stepAI(p: Player, w: AIWorld): void {
 }
 
 /**
- * 1v1 defense: when the carrier starts a move, roll once (keyed by
- * `moveSeq`) and maybe plan a parry press or a check at a specific tell
- * elapsed. The parry press timing is random inside the success window —
- * so AI defenders genuinely whiff sometimes, and a good user times their
- * own presses against the same rules.
+ * 1v1 defense. When the carrier starts a move, roll ONE response (keyed by
+ * `moveSeq`) and carry it out at its planned time. With no move in progress,
+ * maybe plant a check in front of a carrier who is dribbling straight at us.
  */
 function this_step1v1(p: Player, w: AIWorld, carrier: Player): void {
   if (carrier.move) {
-    const def = MOVE_DEFS[carrier.move];
-    if (p.parryRollSeq !== carrier.moveSeq) {
-      p.parryRollSeq = carrier.moveSeq;
-      p.parryPlanT = null;
-      p.checkPlanT = null;
-      const r = w.rng();
-      const pch = AI_PARRY_BASE + AI_PARRY_PER_SPD * p.stats.puckSense;
-      if (r < pch) {
-        const win = effectiveWindow(carrier.move, p.stats.parryWindow);
-        // Press at a random point of the success window (0.05s min so it
-        // isn't instant; can still land early → whiff if reaction is poor).
-        p.parryPlanT = def.tell - win + 0.05 + w.rng() * (win - 0.05);
-      } else if (r < pch + AI_CHECK_CHANCE) {
-        p.checkPlanT = def.tell * 0.5;
-      }
+    if (p.aiPlanSeq !== carrier.moveSeq) {
+      p.aiPlanSeq = carrier.moveSeq;
+      p.aiPlan = planAiResponse({
+        moveId: carrier.move,
+        moves: ALL_MOVES,
+        tell: carrier.tellDur,
+        windowFrac: p.stats.parryFrac,
+        diff: w.diff,
+        puckSense: p.stats.puckSense,
+        rng: w.rng,
+      });
     }
-    if (p.parryPlanT !== null && carrier.moveT >= p.parryPlanT && carrier.moveT <= def.tell) {
-      p.parryPlanT = null;
-      w.parry(p, carrier);
+    const plan = p.aiPlan;
+    if (plan.kind !== 'none' && carrier.moveT >= plan.at) {
+      p.aiPlan = { kind: 'none' };
+      if (plan.kind === 'parry') w.parry(p, carrier, plan.key);
+      else w.check(p);
     }
-    if (p.checkPlanT !== null && carrier.moveT >= p.checkPlanT && carrier.move) {
-      p.checkPlanT = null;
+  } else if (p.checkCd <= 0 && dist(p.pos, carrier.pos) < PRESSURE_RANGE) {
+    // Dribbling straight at me? Plant and block forward progress.
+    const toMe = norm(sub(p.pos, carrier.pos));
+    const heading = norm(carrier.vel);
+    if (len(carrier.vel) > 30 && dot(heading, toMe) > 0.3 && w.rng() < w.diff.aiPressureGuard * w.dt) {
       w.check(p);
     }
   }
-  // Shadow: skate to a spot just behind the carrier (toward their own goal)
-  // so parries/checks are in range without walling the lane.
+  // Shadow: skate to a spot between the carrier and our own goal (i.e. in front
+  // of the carrier) so parries / checks are in range.
   const ownGoal = v(p.team === 0 ? ICE_X : ICE_X + RINK_W, CENTER_Y);
   const back = norm(sub(ownGoal, carrier.pos));
   const spot = add(carrier.pos, scale(back, 40));
@@ -214,14 +220,17 @@ function stepCarrier(p: Player, w: AIWorld): void {
 
   const enemyGoal = p.team === 0 ? v(ICE_X + RINK_W, CENTER_Y) : v(ICE_X, CENTER_Y);
 
-  // Juke when a defender is in the way (chance per second).
-  let td = AI_MOVE_RANGE;
+  // Juke when a defender is in the way (chance per second; difficulty-scaled).
+  const range = w.diff.aiJukeRange;
+  let td = range;
   for (const e of w.players) {
     if (e.team === p.team || e.down) continue;
     td = Math.min(td, dist(e.pos, p.pos));
   }
-  if (td < AI_MOVE_RANGE && p.canStartMove() && w.rng() < AI_MOVE_RATE * w.dt) {
-    p.startMove(ALL_MOVES[Math.floor(w.rng() * ALL_MOVES.length)]);
+  if (td < range && p.canStartMove() && w.rng() < w.diff.aiJukeRate * w.dt) {
+    if (p.startMove(ALL_MOVES[Math.floor(w.rng() * ALL_MOVES.length)], w.diff.aiTellScale)) {
+      p.moveCd *= w.diff.aiMoveCdScale; // easy levels juke more often (so you can practise defending)
+    }
     p.coast(w.dt);
     return;
   }

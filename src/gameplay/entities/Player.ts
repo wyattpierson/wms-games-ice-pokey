@@ -1,26 +1,39 @@
 import type Phaser from 'phaser';
+import { ACTION_KEYS } from '../../config/bindings';
 import {
-  GOALIE_RADIUS, MOVE_COOLDOWN, PERFECT_SHOT_CHARGE, PLAYER_RADIUS,
-  TUMBLE_TIME, WHIFF_TIME,
+  CHECK_SLOW, GOALIE_RADIUS, MOVE_COOLDOWN,
+  PERFECT_SHOT_CHARGE, PLAYER_RADIUS, TUMBLE_TIME, WHIFF_TIME,
 } from '../../config/gameplay';
+import type { AIPlan } from '../../core/aiPlan';
 import { ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
 import { clamp, len, v, type Vec2 } from '../../core/vec2';
-import { MOVE_DEFS, type MoveId } from '../../core/moves';
+import { dashSpeedAt, MOVE_DEFS, type MoveId } from '../../core/moves';
+import { guardRadiusFor, stuffRangeFor } from '../../core/stats';
 import type { HockeyStats } from '../../core/stats';
 
 const BLADE_LEN = 8;
 const SWING_TIME = 0.3;
 
 /**
- * Tell-flash readability contract (this is what defenders read — sprites are
- * busy art, the stick is the signal):
- *   tell progress <  0.45 → dim flicker in the move color ("a move is coming")
- *   tell progress >= 0.45 → bright flashing ("NOW — the parry window is open")
- * The bright phase is drawn from 0.45; the actual success window is the last
- * `effectiveWindow` (<= 0.7 × tell) seconds, so the bright phase always
- * contains it.
+ * Tell readability (the #1 playtest complaint was "hard to see"). A tell is now
+ * shown four ways, none of which depend on reading the busy sprite:
+ *   1. a colour GLOW on the body that grows through the tell;
+ *   2. a RING that shrinks onto a fixed target ring — it lands exactly when the
+ *      tell ends — with the parry window drawn as a shaded band the ring must
+ *      enter; the ring turns white inside the window ("NOW");
+ *   3. a SHAPE badge above the head (circle = Spin, diamond = Deke) …
+ *   4. … carrying the KEY LETTER to press (learning aid; difficulty-gated).
+ * The stick still flashes the move colour too.
  */
-const TELL_BRIGHT_AT = 0.45;
+const TELL_RING_START = 54; // ring starts this far outside the target ring
+const TELL_RING_GAP = 10; // target ring sits this far outside the body
+
+export interface TellHint {
+  /** Parry window (s) of the defender who is looking at this tell. */
+  window: number;
+  /** Show the key letter in the badge. */
+  showKey: boolean;
+}
 
 export interface PlayerVisual {
   name: string;
@@ -57,6 +70,15 @@ export class Player {
   moveResolved = false; // tell ended → effect applied (or parried away)
   moveCd = 0;
   moveSeq = 0; // increments per startMove; defenders key their plans off this
+  tellDur = 0.3; // THIS move's actual tell length (stat + difficulty scaled)
+  effectDur = 0.2;
+  tellHint: TellHint | null = null; // set by the scene when a human defender is watching
+  // Check (block) stance
+  guardT = 0; // >0 while planted as a wall
+  // Dash (the landed half of a skill move): velocity is HELD along dashDir for the effect phase
+  dashDir: Vec2 | null = null;
+  dashSpeed = 0; // px/s at the start of the dash (already × skill)
+  speedScale = 1; // AI speed multiplier (difficulty / teammate factor); ignored for the controlled player
   // Whiff / knockback tumble (visual + brief stagger)
   stagger = 0;
   tumble = 0;
@@ -67,10 +89,9 @@ export class Player {
   checkCd = 0;
   decideTimer = 1;
 
-  // AI parry planning (see ai.ts)
-  parryRollSeq = -1;
-  parryPlanT: number | null = null; // tell-elapsed at which the AI presses
-  checkPlanT: number | null = null;
+  // AI response planning (see ai.ts / core/aiPlan.ts)
+  aiPlanSeq = -1;
+  aiPlan: AIPlan = { kind: 'none' };
 
   controlled = false;
   aiChase = false;
@@ -83,6 +104,7 @@ export class Player {
   private container: Phaser.GameObjects.Container;
   private g: Phaser.GameObjects.Graphics;
   private img: Phaser.GameObjects.Image | null = null;
+  private tellText: Phaser.GameObjects.Text;
   private def: PlayerVisual;
 
   private t = 0; // local clock for anims
@@ -115,7 +137,14 @@ export class Player {
     }
 
     this.g = scene.add.graphics();
-    this.container = scene.add.container(x, y, this.img ? [shadow, this.img, this.g] : [shadow, this.g]);
+    this.tellText = scene.add
+      .text(0, -64, '', { fontFamily: 'monospace', fontSize: '18px', fontStyle: 'bold', color: '#000000' })
+      .setOrigin(0.5)
+      .setVisible(false);
+    this.container = scene.add.container(
+      x, y,
+      this.img ? [shadow, this.img, this.g, this.tellText] : [shadow, this.g, this.tellText],
+    );
   }
 
   get name(): string {
@@ -139,14 +168,20 @@ export class Player {
     return !this.move && this.moveCd <= 0 && this.stagger <= 0 && !this.down;
   }
 
-  startMove(id: MoveId): boolean {
+  /**
+   * `tellScale` stretches the tell on top of the player's own Special-Attack
+   * scaling (the AI passes its difficulty's aiTellScale here).
+   */
+  startMove(id: MoveId, tellScale = 1): boolean {
     if (!this.canStartMove()) return false;
     this.move = id;
     this.moveT = 0;
     this.moveResolved = false;
     this.moveSeq += 1;
     const def = MOVE_DEFS[id];
-    this.moveCd = MOVE_COOLDOWN + def.tell + def.effect;
+    this.tellDur = def.tell * this.def.stats.tellMult * tellScale;
+    this.effectDur = def.effect;
+    this.moveCd = MOVE_COOLDOWN + this.tellDur + this.effectDur;
     // A move is a commitment: cancel any shot charge in progress.
     this.charging = false;
     this.charge = 0;
@@ -155,9 +190,25 @@ export class Player {
 
   /** Failed parry: staggered and open. */
   whiff(): void {
+    this.guardT = 0;
     this.stagger = WHIFF_TIME;
     this.tumble = TUMBLE_TIME;
     this.moveCd = Math.max(this.moveCd, MOVE_COOLDOWN);
+  }
+
+  /** Radius of this player's check wall (Defense-scaled). */
+  guardRadius(): number {
+    return guardRadiusFor(this.def.stats.checkPower);
+  }
+
+  /** A juke resolving this close to a planted defender is stuffed. */
+  stuffRange(): number {
+    return stuffRangeFor(this.def.stats.checkPower);
+  }
+
+  /** True while a landed skill move is carrying this player along its dash. */
+  get dashing(): boolean {
+    return !!(this.dashDir && this.move && this.moveResolved && this.moveT >= this.tellDur);
   }
 
   /** Angle the stick is drawn at (charge cock-back, swings, tell flick). */
@@ -165,10 +216,10 @@ export class Player {
     let a = this.facing;
     if (this.charging) a -= this.charge * 0.9;
     else if (this.stickSwing > 0) a -= 1.2 * (this.stickSwing / SWING_TIME);
-    if (this.move && this.moveT < MOVE_DEFS[this.move].tell) {
+    if (this.move && this.moveT < this.tellDur) {
       // The juke animation: the stick (and the puck on its blade) works the
       // puck back and forth while the tell plays out.
-      const t = this.moveT / MOVE_DEFS[this.move].tell;
+      const t = this.moveT / this.tellDur;
       a += Math.sin(this.moveT * 38) * 0.55 * t;
     }
     return a;
@@ -190,7 +241,9 @@ export class Player {
   /** Steer toward a target velocity (glide = hockey feel). */
   applyInput(dir: Vec2, dt: number, speedFactor = 1): void {
     if (this.stagger > 0 || this.down) return; // staggered: can't steer
-    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor;
+    const planted = this.guardT > 0 ? CHECK_SLOW : 1;
+    const aiScale = this.controlled ? 1 : this.speedScale;
+    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale;
     const tx = dir.x * speed;
     const ty = dir.y * speed;
     const t = Math.min(1, dt * 11);
@@ -216,17 +269,25 @@ export class Player {
     this.stagger = Math.max(0, this.stagger - dt);
     this.tumble = Math.max(0, this.tumble - dt);
     this.checkCd = Math.max(0, this.checkCd - dt);
+    this.guardT = Math.max(0, this.guardT - dt);
     this.decideTimer -= dt;
 
     // Move lifecycle: tell (scene watches for parries) → effect → done.
     if (this.move) {
       this.moveT += dt;
-      const def = MOVE_DEFS[this.move];
       // Spin effect: rotate fully through the effect phase.
-      if (this.moveResolved && this.move === 'spin' && this.moveT >= def.tell) {
-        this.facing += ((Math.PI * 2) / def.effect) * dt;
+      if (this.moveResolved && this.move === 'spin' && this.moveT >= this.tellDur) {
+        this.facing += ((Math.PI * 2) / this.effectDur) * dt;
       }
-      if (this.moveT >= def.tell + def.effect) this.move = null;
+      if (this.moveT >= this.tellDur + this.effectDur) this.move = null;
+    }
+    // Dash: override whatever input/friction did to velocity this frame.
+    if (this.dashing && this.dashDir) {
+      const ph = (this.moveT - this.tellDur) / this.effectDur;
+      const sp = dashSpeedAt(this.dashSpeed, ph);
+      this.vel = v(this.dashDir.x * sp, this.dashDir.y * sp);
+    } else if (!this.move) {
+      this.dashDir = null;
     }
 
     const sp = len(this.vel);
@@ -264,6 +325,68 @@ export class Player {
 
   setControlled(c: boolean): void {
     this.controlled = c;
+  }
+
+  /** Glow + shrinking ring + window band + shape badge/key letter. See TellHint doc. */
+  private drawTell(
+    g: Phaser.GameObjects.Graphics,
+    r: number,
+    telling: boolean,
+    progress: number,
+    winFrac: number,
+    inWindow: boolean,
+  ): void {
+    if (!telling || !this.move) {
+      this.tellText.setVisible(false);
+      return;
+    }
+    const def = MOVE_DEFS[this.move];
+    const target = r + TELL_RING_GAP;
+    const startR = target + TELL_RING_START;
+    const ringR = startR + (target - startR) * progress;
+    const flicker = 0.5 + 0.5 * Math.sin(this.t * 36);
+
+    // 1. Body glow (grows through the tell; pulses once the window is open).
+    g.fillStyle(def.color, 0.14 + 0.28 * progress + (inWindow ? 0.14 * flicker : 0));
+    g.fillCircle(0, 2, r + 5);
+
+    // 2. Window band (where the ring is when a press succeeds) + target ring + moving ring.
+    const openR = startR + (target - startR) * (1 - winFrac);
+    g.lineStyle(openR - target + 6, def.color, 0.16);
+    g.strokeCircle(0, 2, (openR + target) / 2);
+    g.lineStyle(3, def.color, 0.95);
+    g.strokeCircle(0, 2, target);
+    g.lineStyle(inWindow ? 6 : 3, inWindow ? 0xffffff : def.color, 1);
+    g.strokeCircle(0, 2, ringR);
+
+    // 3 + 4. Shape badge (+ key letter) — only when a human is defending against it.
+    const hint = this.tellHint;
+    if (!hint) {
+      this.tellText.setVisible(false);
+      return;
+    }
+    const by = -64;
+    const k = inWindow ? 1.2 + 0.1 * flicker : 1;
+    const br = 13 * k;
+    g.fillStyle(inWindow ? 0xffffff : def.color, 0.97);
+    g.lineStyle(3, 0x000000, 1);
+    if (this.move === 'deke') {
+      const pts = [{ x: 0, y: by - br * 1.2 }, { x: br * 1.2, y: by }, { x: 0, y: by + br * 1.2 }, { x: -br * 1.2, y: by }];
+      g.fillPoints(pts, true);
+      g.strokePoints(pts, true);
+    } else if (this.move === 'crossover') {
+      g.fillRect(-br, by - br, br * 2, br * 2);
+      g.strokeRect(-br, by - br, br * 2, br * 2);
+    } else {
+      g.fillCircle(0, by, br);
+      g.strokeCircle(0, by, br);
+    }
+    this.tellText.setVisible(hint.showKey);
+    if (hint.showKey) {
+      this.tellText.setText((ACTION_KEYS[this.move][0] ?? '').toUpperCase());
+      this.tellText.setPosition(0, by);
+      this.tellText.setScale(k);
+    }
   }
 
   private draw(): void {
@@ -311,6 +434,19 @@ export class Player {
       g.fillCircle(0, 0, r + 2);
     }
 
+    // Check (block) stance: a translucent wall the size of the check radius.
+    if (this.guardT > 0) {
+      const gr = this.guardRadius();
+      const pulse = 0.5 + 0.5 * Math.sin(this.t * 24);
+      g.fillStyle(0x9ad1ff, 0.14 + 0.1 * pulse);
+      g.fillCircle(0, 2, gr);
+      g.lineStyle(3, 0x9ad1ff, 0.85);
+      g.strokeCircle(0, 2, gr);
+      // Outer faint ring = how far the block reaches to STUFF a juke.
+      g.lineStyle(2, 0x9ad1ff, 0.3);
+      g.strokeCircle(0, 2, this.stuffRange());
+    }
+
     // Stick: shaft from the hand (body edge), then a short blade out to the
     // side. Container-local coords — must mirror bladeTip() (world-space).
     // During a tell the stick takes the move's color: dim flicker before the
@@ -318,16 +454,19 @@ export class Player {
     let stickColor = 0xd9b36c;
     let bladeColor = 0x8a6a3b;
     let stickAlpha = 1;
-    if (this.move) {
+    const telling = !!this.move && this.moveT < this.tellDur;
+    const progress = telling ? this.moveT / this.tellDur : 0;
+    // Window opens at (1 − window/tell). Without a watching defender, assume half.
+    const winFrac = this.tellHint ? Math.min(0.9, this.tellHint.window / this.tellDur) : 0.5;
+    const inWindow = telling && progress >= 1 - winFrac;
+    if (telling && this.move) {
       const def = MOVE_DEFS[this.move];
-      if (this.moveT < def.tell) {
-        const t = this.moveT / def.tell;
-        const bright = t >= TELL_BRIGHT_AT;
-        stickColor = def.color;
-        bladeColor = def.color;
-        stickAlpha = bright ? 0.8 + 0.2 * Math.sin(this.t * 42) : 0.35 + 0.2 * Math.sin(this.t * 30);
-      }
+      stickColor = def.color;
+      bladeColor = def.color;
+      stickAlpha = inWindow ? 0.8 + 0.2 * Math.sin(this.t * 42) : 0.35 + 0.2 * Math.sin(this.t * 30);
     }
+    this.drawTell(g, r, telling, progress, winFrac, inWindow);
+
     const a = this.stickAngle();
     const dx = Math.cos(a);
     const dy = Math.sin(a);

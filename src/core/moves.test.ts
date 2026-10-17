@@ -1,52 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import { MOVE_DEFS, effectiveWindow, movePhase, parryTiming, type MoveId } from './moves';
+import { ALL_MOVES, dashSpeedAt, MOVE_DEFS, movePhase, parryTiming, windowSeconds } from './moves';
 
-describe('effectiveWindow', () => {
-  it('clamps a wide stat window to 70% of the tell', () => {
-    for (const id of Object.keys(MOVE_DEFS) as MoveId[]) {
-      expect(effectiveWindow(id, 5)).toBeCloseTo(MOVE_DEFS[id].tell * 0.7, 5);
-    }
+describe('windowSeconds', () => {
+  it('is a fraction of the tell', () => {
+    expect(windowSeconds(0.5, 0.5)).toBeCloseTo(0.25, 5);
+    expect(windowSeconds(1.0, 0.35)).toBeCloseTo(0.35, 5);
   });
-
-  it('keeps a narrow window as-is (with a 0.05s floor)', () => {
-    expect(effectiveWindow('spin', 0.1)).toBeCloseTo(0.1, 5);
-    expect(effectiveWindow('spin', 0)).toBeCloseTo(0.05, 5);
+  it('has a floor and never swallows the whole tell', () => {
+    expect(windowSeconds(0.3, 0.01)).toBeCloseTo(0.07, 5);
+    expect(windowSeconds(0.3, 5)).toBeCloseTo(0.27, 5);
+  });
+  it('scales with the tell (longer tell → longer window at the same stat)', () => {
+    expect(windowSeconds(0.9, 0.5)).toBeGreaterThan(windowSeconds(0.3, 0.5));
   });
 });
 
 describe('parryTiming', () => {
-  const TELL = MOVE_DEFS.spin.tell; // 0.30
-
+  const TELL = 0.5;
+  const FRAC = 0.5; // window = last 0.25s → opens at 0.25
   it('presses before the window opens are early', () => {
-    const win = effectiveWindow('spin', 0.36);
-    expect(parryTiming('spin', TELL - win - 0.01, 0.36)).toBe('early');
-    expect(parryTiming('spin', 0.01, 0.36)).toBe('early');
+    expect(parryTiming(TELL, 0.01, FRAC)).toBe('early');
+    expect(parryTiming(TELL, 0.24, FRAC)).toBe('early');
   });
-
-  it('presses inside the window (last part of the tell) succeed', () => {
-    const win = effectiveWindow('spin', 0.36);
-    expect(parryTiming('spin', TELL - win, 0.36)).toBe('success');
-    expect(parryTiming('spin', TELL - win / 2, 0.36)).toBe('success');
-    expect(parryTiming('spin', TELL, 0.36)).toBe('success'); // exactly at the end
+  it('presses inside the window succeed (inclusive at both ends)', () => {
+    expect(parryTiming(TELL, 0.25, FRAC)).toBe('success');
+    expect(parryTiming(TELL, 0.4, FRAC)).toBe('success');
+    expect(parryTiming(TELL, TELL, FRAC)).toBe('success');
   });
-
   it('presses after the tell ends are late', () => {
-    expect(parryTiming('spin', TELL + 0.01, 0.36)).toBe('late');
-  });
-
-  it('a tiny window still has a succeedable sliver at the very end', () => {
-    expect(parryTiming('spin', TELL - 0.02, 0.05)).toBe('success');
+    expect(parryTiming(TELL, TELL + 0.01, FRAC)).toBe('late');
   });
 });
 
 describe('movePhase', () => {
-  it('walks tell → effect → done', () => {
-    const t = MOVE_DEFS.deke.tell;
-    const e = MOVE_DEFS.deke.effect;
-    expect(movePhase('deke', 0)).toBe('tell');
-    expect(movePhase('deke', t - 0.01)).toBe('tell');
-    expect(movePhase('deke', t)).toBe('effect');
-    expect(movePhase('deke', t + e - 0.01)).toBe('effect');
-    expect(movePhase('deke', t + e)).toBe('done');
+  it('walks tell → effect → done for a given tell/effect length', () => {
+    expect(movePhase(0.5, 0.2, 0)).toBe('tell');
+    expect(movePhase(0.5, 0.2, 0.49)).toBe('tell');
+    expect(movePhase(0.5, 0.2, 0.5)).toBe('effect');
+    expect(movePhase(0.5, 0.2, 0.69)).toBe('effect');
+    expect(movePhase(0.5, 0.2, 0.7)).toBe('done');
+  });
+});
+
+describe('move set', () => {
+  it('ships with exactly 2 moves enabled: a fast one and a slow, bigger one', () => {
+    expect(ALL_MOVES).toEqual(['spin', 'deke']);
+    expect(MOVE_DEFS.deke.tell).toBeGreaterThan(MOVE_DEFS.spin.tell);
+    expect(MOVE_DEFS.deke.dash * MOVE_DEFS.deke.effect).toBeGreaterThan(MOVE_DEFS.spin.dash * MOVE_DEFS.spin.effect);
+  });
+});
+
+describe('dashSpeedAt', () => {
+  it('starts at full speed, eases out, never goes backwards', () => {
+    expect(dashSpeedAt(500, 0)).toBe(500);
+    expect(dashSpeedAt(500, 1)).toBeCloseTo(275, 5);
+    expect(dashSpeedAt(500, 0.5)).toBeLessThan(500);
+    expect(dashSpeedAt(500, 0.5)).toBeGreaterThan(dashSpeedAt(500, 1));
+    expect(dashSpeedAt(500, 9)).toBeCloseTo(275, 5); // clamped
+  });
+  it('a landed move carries you well past a body-width (≥70px even at the bottom of the skill range)', () => {
+    for (const id of ALL_MOVES) {
+      const d = MOVE_DEFS[id];
+      let dist = 0;
+      const N = 100;
+      for (let i = 0; i < N; i++) dist += dashSpeedAt(d.dash * 0.75, i / N) * (d.effect / N);
+      expect(dist).toBeGreaterThan(70);
+    }
   });
 });

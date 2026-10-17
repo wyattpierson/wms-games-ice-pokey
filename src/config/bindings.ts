@@ -9,10 +9,10 @@ export type Action = 'pass' | 'shoot' | 'spin' | 'crossover' | 'deke';
 
 export const ACTION_KEYS: Record<Action, string[]> = {
   pass: ['SPACE'], // offense: pass · defense: switch controlled defender
-  shoot: ['ENTER', 'SHIFT'], // offense: hold to charge, release to shoot (≥80% = perfect) · defense: check
+  shoot: ['ENTER', 'SHIFT'], // offense: hold to charge, release to shoot (≥80% = perfect) · defense: CHECK (block — never steals)
   spin: ['J'], // offense: Spin juke · defense: parry (same-key)
-  crossover: ['K'], // offense: Crossover juke · defense: parry
-  deke: ['L'], // offense: Deke juke · defense: parry
+  deke: ['K'], // offense: Deke juke · defense: parry
+  crossover: ['L'], // (disabled — see ENABLED_MOVES)
 };
 
 export const MOVE_KEYS: Record<'up' | 'down' | 'left' | 'right', string[]> = {

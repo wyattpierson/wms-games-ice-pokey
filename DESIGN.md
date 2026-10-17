@@ -76,29 +76,49 @@ power plays. Win matches, poach Pokémon, beat the gauntlet.
 **Parry matching (decided): same-key matching** — J counters J, K counters K, L counters L.
 Simplest to teach; the color flash tells you which key to press.
 
-### Starting move list (3 moves + 1 check — same keys both sides) — **implemented**
+### Move list (2 moves + a check — same keys both sides) — **implemented (session 5)**
 
-| Key | Offense (skill move) | Tell | Effect if unparried (implemented) | Defense (parry counter) |
-|-----|----------------------|------|-----------------------------------|-------------------------|
-| **J** | **Spin** — 360° turn | orange stick flash, 0.30s tell | 2π spin + forward burst (195×SpA), knocks nearby defenders back | **Spin check** — stick sweep; steals |
-| **K** | **Crossover** — lateral cut + burst | blue stick flash, 0.35s tell | sharp cut to the side AWAY from the nearest defender + big burst (260×SpA) | **Slip** — mirror the cut; steals |
-| **L** | **Deke** — drop the puck behind and pivot | yellow stick flash, 0.45s tell | largest burst (320×SpA) + biggest knock radius | **Poke** — reach through; steals |
+Cut from 3 moves to **2** (3 was too much to learn at once). Crossover is still
+defined in `core/moves.ts` but disabled via `ENABLED_MOVES` in
+`config/gameplay.ts` — re-enable by adding it back to that array.
 
-All three unparried effects also **knock nearby defenders back, biased behind
-the carrier** (the move's payoff is separation, per user: "the other player
-will get pushed back (maybe behind you)"). During the tell the stick visibly
-**oscillates with the puck** (the deke "feint"); the carrier is committed
-(can't steer) while the tell runs.
+| Key | Offense (skill move) | Base tell | Landed effect | Defense |
+|-----|----------------------|-----------|---------------|---------|
+| **J** | **Spin** — fast, cheap | 0.30s · orange · **circle** badge | **dash** 720 px/s × SpA for 0.22s (≈100 px), stuns nearby defenders 0.30s | press **J** in the window = parry (steal) |
+| **K** | **Deke** — slow, big | 0.50s · yellow · **diamond** badge | **dash** 880 px/s × SpA for 0.28s (≈170 px), bigger knock radius, stuns 0.45s | press **K** in the window = parry (steal) |
+| **Enter/Shift** | (shoot) | — | — | **Check = block** (below). Never steals. |
 
-- **Parry resolution (implemented, `core/moves.ts`)**: the success window is the
-  last `PARRY_WINDOW_BASE + PARRY_WINDOW_PER_SPD × SpD` seconds of the tell
-  (clamped to ≤ 70% of the tell, floor 0.05s). Right key in window = steal +
-  `COUNTER_BURST` (330 px/s) away from the carrier + "!" popup; the carrier
-  tumbles and is briefly staggered. Wrong key / early / late = whiff: 0.5s
-  stagger + tumble, cooldown consumed. Pressing with no active tell = harmless
-  stick tap. Check = `CHECK_PUSH` (260 px/s) on the carrier, no whiff risk,
-  chance to dislodge (`CHECK_DISLODGE_BASE + 0.4×Def/100`) when the carrier
-  isn't mid-tell; 1.0s cooldown. (Check **HP damage** still pending — step 4.)
+**Offense feel (what changed and why).** The old "burst" was a one-shot velocity
+impulse; friction (`exp(-7dt)`) and input blending ate it in ~0.1s, so a juke
+moved you ~7px more than just running — the move had no payoff. Now a landed
+move is a **dash**: velocity is *held* along the dash direction for the whole
+effect phase and eases out (`dashSpeedAt`). You also keep **limited steering
+during the wind-up** (`TELL_STEER` = 45% speed), and **the dash goes where you
+point at the end of the tell**. A dashing carrier slips through the defenders it
+just stunned. A short afterimage trail marks the dash.
+
+**Tell readability (the #1 playtest complaint).** Four layers, none of which
+need you to read the busy sprite: (1) colour **glow** on the body; (2) a
+**shrinking ring** that lands on a fixed target ring exactly when the tell ends,
+with your actual **parry window drawn as a shaded band** — the ring turns white
+inside it; (3) a **shape badge** above the carrier (circle = Spin, diamond =
+Deke); (4) the **key letter** inside the badge (learning aid, shown below
+difficulty level 0.7). A whiff pops up *why*: TOO EARLY / TOO LATE / WRONG MOVE.
+
+**Parry resolution (`core/moves.ts`).** The window is the last
+`windowSeconds(tell, parryFrac)` of the tell, where `parryFrac` is
+0.35–0.75 (by Special Defense) — a **fraction of the tell**, not seconds clamped
+to it (the old clamp made the window *identical* for every Pokémon on Spin /
+Crossover). Right key in window = steal + counter-burst + "PARRY!". Early / late /
+wrong key = whiff (0.5s stagger). No tell = harmless tap.
+
+**Check = block (`CHECK_*` constants).** Never steals, never whiffs. The defender
+plants for 0.55s (moves at 20% speed, cooldown 1.1s) and becomes a **wall**:
+opponents can't enter its radius (30–44px by Defense) and lose velocity into it
+("blocks forward progress"). A juke that *resolves* within the block's reach
+(radius + 32 ≥ the parry range) is **stuffed**: dash cancelled, carrier stunned
+0.25–0.55s (by Defense), puck kept. Faint outer ring shows the stuff reach.
+Block is the safe, positional answer; parry is the risky, rewarding one.
 
 Design intent:
 - **Fast & cheap → slow & rewarding**: Spin is the most readable (shortest, most
@@ -110,8 +130,10 @@ Design intent:
   **stamina** (see below).
 - Parry success chance is **not** a coin flip — if you press the right key in the
   window, it succeeds. **SpD scales the window width** (see stat system). This
-  keeps it feeling like skill, not RNG. (AI defenders instead roll parry
-  probability from their SpD + difficulty, so you still get parried by AI.)
+  keeps it feeling like skill, not RNG. (AI defenders are *honest*: they roll a
+  response per tell — parry / block / nothing — aim for the middle of the
+  window with timing error, can misread the move, and can't react before a
+  reaction time. They whiff, and you can bait it. See "Difficulty".)
 
 ### What else is a "attack"?
 
@@ -209,6 +231,24 @@ Pokémon base stats → in-game:
 | **Defense** | checking power | check damage, pushback, dislodge chance, shot blocking |
 | **Special Defense** | puck sense | **parry window width**, pass intercept chance, goalie save chance, AI read quality |
 | **Speed** | skates | movement speed (everyone) |
+
+**Implemented (session 5):** every mapping goes through `statNorm` (base stat
+40→0, 120→1), so the *real* spread of Pokémon stats uses the whole derived range:
+speed 150–290 px/s, shot power ×0.75–1.35, skill (dash) ×0.75–1.35, tell speed
+×1.10–0.85 (high SpA = snappier = harder to read), parry window 35–75% of the
+tell, puck sense 0.2–1.0, check wall 30–44px. (Previously a 50 and a 100 SpD gave
+the *same* Spin/Crossover window.) Spread now depends on roster choice too —
+placeholder rosters have a narrow Sp.Atk band.
+
+### Difficulty (`config/difficulty.ts`)
+
+One knob, `level` 0..1 (dev: `?level=0.5`; default 0 = slow tutorial pace). It
+interpolates: opponent skating speed 0.55→0.95, AI tell length ×1.7→×1.0,
+AI reaction 0.60s→0.17s, timing error 0.20s→0.035s, parry/block rates, read
+accuracy 50%→95%, AI-carrier juke rate/range/cooldown (jukes *more* at low
+levels so you can practise defending), and key-letter hints off at ≥0.7. The
+campaign should map "wins so far" onto this. Measured end-to-end (human Spin vs
+one AI defender at 45px): level 0 → 4% neutralised, 0.5 → 23%, 1 → ~50%.
 
 Goalies weight SpD/HP/Defense heavily, field players weight Speed/SpA/SpD. Any
 Pokémon can play any slot; the slot just changes which stats matter (same pattern
