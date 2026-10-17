@@ -31,7 +31,8 @@ export interface AIWorld {
   rng: () => number;
   diff: Difficulty;
   pass: (from: Player, to: Player) => void;
-  shoot: (from: Player, dir: Vec2, charge: number) => void;
+  /** aimY: -1..1 along the goal mouth (beyond ±1 = wide). */
+  shoot: (from: Player, aimY: number, charge: number) => void;
   /** AI parry attempt with a specific key (it may be the wrong one, or badly timed). */
   parry: (defender: Player, carrier: Player, key: MoveId) => void;
   /** AI check (block stance). */
@@ -244,8 +245,8 @@ function stepCarrier(p: Player, w: AIWorld): void {
     const dGoal = dist(p.pos, enemyGoal);
     if (dGoal < SHOT_RANGE) {
       if (w.rng() < 0.6 || !rec) {
-        const jitter = v((w.rng() - 0.5) * 90, (w.rng() - 0.5) * 130);
-        w.shoot(p, norm(add(sub(enemyGoal, p.pos), jitter)), 0.85 + w.rng() * 0.15);
+        // Pick a spot on the goal mouth; low levels are sloppy (can shoot wide).
+        w.shoot(p, (w.rng() * 2 - 1) * w.diff.aiShotSpread, 0.85 + w.rng() * 0.15);
       } else {
         w.pass(p, rec);
       }

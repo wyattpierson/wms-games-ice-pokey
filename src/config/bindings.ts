@@ -9,9 +9,11 @@ export type Action = 'pass' | 'shoot' | 'spin' | 'crossover' | 'deke';
 
 export const ACTION_KEYS: Record<Action, string[]> = {
   pass: ['SPACE'], // offense: pass · defense: switch controlled defender
-  shoot: ['ENTER', 'SHIFT'], // offense: hold to charge, release to shoot (≥80% = perfect) · defense: CHECK (block — never steals)
-  spin: ['J'], // offense: Spin juke · defense: parry (same-key)
-  deke: ['K'], // offense: Deke juke · defense: parry
+  shoot: ['SHIFT', 'ENTER'], // offense: hold to charge, release in the window to shoot · defense: CHECK (block — never steals)
+  // The FIRST key is the primary (shown in the on-screen key hint); the rest are alternates.
+  // E / F sit under the LEFT hand so the right hand can stay on the arrow keys.
+  spin: ['E', 'J'], // offense: Spin juke · defense: parry (same key)
+  deke: ['F', 'K'], // offense: Deke juke · defense: parry
   crossover: ['L'], // (disabled — see ENABLED_MOVES)
 };
 

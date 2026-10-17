@@ -49,20 +49,20 @@ const canvas = await page.evaluate(() => {
 console.log('canvas:', JSON.stringify(canvas));
 
 // Play ~5s with real inputs: move, pass, charge shot, juke, check.
-await page.keyboard.down('KeyD');
+await page.keyboard.down('ArrowRight');
 await page.waitForTimeout(900);
-await page.keyboard.up('KeyD');
+await page.keyboard.up('ArrowRight');
 await page.keyboard.press('Space');
 await page.waitForTimeout(400);
-await page.keyboard.down('Enter');
+await page.keyboard.down('Shift');
+await page.keyboard.down('ArrowDown'); // aim the reticle down the goal mouth
 await page.waitForTimeout(900);
-await page.keyboard.up('Enter');
+await page.keyboard.up('ArrowDown');
+await page.keyboard.up('Shift');
 await page.waitForTimeout(300);
-await page.keyboard.press('KeyJ');
-await page.waitForTimeout(300);
-await page.keyboard.press('KeyK');
-await page.waitForTimeout(300);
-await page.keyboard.press('KeyL');
+await page.keyboard.press('KeyE'); // Spin
+await page.waitForTimeout(600);
+await page.keyboard.press('KeyF'); // Deke
 await page.waitForTimeout(2500);
 
 // The match must have progressed (drop → live) and the canvas must be visible.

@@ -30,6 +30,8 @@ export interface Difficulty {
   aiJukeRange: number;
   /** Scales the AI carrier's move cooldown (lower = jukes more often). */
   aiMoveCdScale: number;
+  /** AI shot accuracy: aim is uniform in ±this × the goal mouth (>1 means it can shoot wide). */
+  aiShotSpread: number;
   /** Show the key letter above a carrier's tell (learning aid; off at high levels). */
   showKeyHint: boolean;
 }
@@ -48,6 +50,7 @@ const EASY: Numeric = {
   aiJukeRate: 3.0,
   aiJukeRange: 170,
   aiMoveCdScale: 0.6,
+  aiShotSpread: 1.4,
 };
 
 const HARD: Numeric = {
@@ -62,6 +65,7 @@ const HARD: Numeric = {
   aiJukeRate: 1.8,
   aiJukeRange: 130,
   aiMoveCdScale: 1.0,
+  aiShotSpread: 0.8,
 };
 
 export const SHOW_KEY_HINT_BELOW_LEVEL = 0.7;

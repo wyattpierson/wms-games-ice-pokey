@@ -27,6 +27,34 @@ const SWING_TIME = 0.3;
  */
 const TELL_RING_START = 54; // ring starts this far outside the target ring
 const TELL_RING_GAP = 10; // target ring sits this far outside the body
+const CUE_BURST_TIME = 0.28; // the flash when a window opens
+
+/**
+ * Every cue uses the same grammar (so you learn it once): a ring shrinks onto a
+ * fixed target ring; a shaded band marks the window; the ring turns white and a
+ * burst fires when the window opens. What differs per source is the SHAPE, so
+ * moves are tell-able at a glance:  Spin = rotating arcs (circle), Deke = diamond,
+ * shot window on the goalie = gold circle + "SHOOT!".
+ */
+type CueShape = 'circle' | 'diamond' | 'spin';
+interface Cue {
+  color: number;
+  progress: number; // 0..1 along the ring's travel
+  openAt: number; // progress at which the window opens
+  inWindow: boolean;
+  shape: CueShape;
+  badge: 'circle' | 'diamond' | 'square' | 'none';
+  label: string | null;
+  labelScale: number;
+  badgeY: number;
+}
+
+/** The goalie's perfect-shot cue (set by the scene while the user charges a shot). */
+export interface ShotCue {
+  progress: number;
+  openAt: number;
+  inWindow: boolean;
+}
 
 export interface TellHint {
   /** Parry window (s) of the defender who is looking at this tell. */
@@ -95,7 +123,11 @@ export class Player {
 
   controlled = false;
   aiChase = false;
-  shotTell = false; // (goalie) enemy is in the perfect-shot charge zone
+  shotCue: ShotCue | null = null; // (goalie) the enemy is charging a shot: show the release window
+  holdT = 0; // seconds the shoot key has been held (drives charge via core/shot.ts)
+  aimY = 0; // shot aim along the goal mouth, -1..1 (reset when a charge starts)
+  private cueIn = false;
+  private cueBurst = 0;
 
   readonly seed = Math.random();
   readonly slot: number;
@@ -138,7 +170,10 @@ export class Player {
 
     this.g = scene.add.graphics();
     this.tellText = scene.add
-      .text(0, -64, '', { fontFamily: 'monospace', fontSize: '18px', fontStyle: 'bold', color: '#000000' })
+      .text(0, -64, '', {
+        fontFamily: 'monospace', fontSize: '18px', fontStyle: 'bold', color: '#ffffff',
+        stroke: '#000000', strokeThickness: 4,
+      })
       .setOrigin(0.5)
       .setVisible(false);
     this.container = scene.add.container(
@@ -185,6 +220,7 @@ export class Player {
     // A move is a commitment: cancel any shot charge in progress.
     this.charging = false;
     this.charge = 0;
+    this.holdT = 0;
     return true;
   }
 
@@ -220,7 +256,11 @@ export class Player {
       // The juke animation: the stick (and the puck on its blade) works the
       // puck back and forth while the tell plays out.
       const t = this.moveT / this.tellDur;
-      a += Math.sin(this.moveT * 38) * 0.55 * t;
+      if (this.move === 'spin') {
+        a += Math.pow(t, 1.4) * Math.PI * 2; // winds up in a full, accelerating circle (the puck orbits you)
+      } else {
+        a += Math.sin(this.moveT * 38) * 0.75 * t; // quick side-to-side feint
+      }
     }
     return a;
   }
@@ -270,6 +310,7 @@ export class Player {
     this.tumble = Math.max(0, this.tumble - dt);
     this.checkCd = Math.max(0, this.checkCd - dt);
     this.guardT = Math.max(0, this.guardT - dt);
+    this.cueBurst = Math.max(0, this.cueBurst - dt);
     this.decideTimer -= dt;
 
     // Move lifecycle: tell (scene watches for parries) → effect → done.
@@ -309,6 +350,14 @@ export class Player {
     if (this.tumble > 0) {
       const k = this.tumble / TUMBLE_TIME;
       this.container.rotation = Math.sin((TUMBLE_TIME - this.tumble) * 14) * 0.45 * k;
+    } else if (this.dashing && this.move === 'spin') {
+      // Spin: the whole body does one full pirouette through the dash.
+      const ph = Math.min(1, (this.moveT - this.tellDur) / this.effectDur);
+      this.container.rotation = Math.PI * 2 * (1 - Math.pow(1 - ph, 2.2));
+    } else if (this.dashing && this.move === 'deke' && this.dashDir) {
+      // Deke: a sharp lean into the cut, snapping back upright.
+      const ph = Math.min(1, (this.moveT - this.tellDur) / this.effectDur);
+      this.container.rotation = Math.sin(ph * Math.PI) * 0.32 * (this.dashDir.x >= 0 ? 1 : -1);
     } else {
       this.container.rotation = 0;
     }
@@ -318,6 +367,9 @@ export class Player {
       this.img.flipX = Math.cos(this.facing) >= 0; // front sprites face left
       this.bobT += sp * dt;
       this.img.y = -2 - (sp > 24 ? Math.abs(Math.sin(this.bobT * 0.09)) * 3 : 0);
+      // Deke wind-up: the body sways side to side, growing as the cut nears.
+      const dekeTell = this.move === 'deke' && this.moveT < this.tellDur;
+      this.img.x = dekeTell ? Math.sin(this.moveT * 24) * 6 * (this.moveT / this.tellDur) : 0;
     }
 
     this.draw();
@@ -327,66 +379,88 @@ export class Player {
     this.controlled = c;
   }
 
-  /** Glow + shrinking ring + window band + shape badge/key letter. See TellHint doc. */
-  private drawTell(
-    g: Phaser.GameObjects.Graphics,
-    r: number,
-    telling: boolean,
-    progress: number,
-    winFrac: number,
-    inWindow: boolean,
-  ): void {
-    if (!telling || !this.move) {
+  /** One ring of a cue, in the cue's shape. `moving` = the shrinking ring (Spin's is rotating arcs). */
+  private strokeCueRing(g: Phaser.GameObjects.Graphics, shape: CueShape, rad: number, moving: boolean): void {
+    if (shape === 'diamond') {
+      const d = rad * 1.18;
+      g.strokePoints([{ x: 0, y: 2 - d }, { x: d, y: 2 }, { x: 0, y: 2 + d }, { x: -d, y: 2 }], true);
+    } else if (shape === 'spin' && moving) {
+      const rot = this.t * 9;
+      for (let i = 0; i < 3; i++) {
+        const a0 = rot + (i * Math.PI * 2) / 3;
+        g.beginPath();
+        g.arc(0, 2, rad, a0, a0 + 1.3, false);
+        g.strokePath();
+      }
+    } else {
+      g.strokeCircle(0, 2, rad);
+    }
+  }
+
+  /** Glow + shrinking ring + window band + window-open burst + badge/label. See the Cue doc. */
+  private drawCue(g: Phaser.GameObjects.Graphics, r: number, cue: Cue | null): void {
+    if (!cue) {
+      this.cueIn = false;
       this.tellText.setVisible(false);
+      this.drawBurst(g, r);
       return;
     }
-    const def = MOVE_DEFS[this.move];
     const target = r + TELL_RING_GAP;
     const startR = target + TELL_RING_START;
-    const ringR = startR + (target - startR) * progress;
+    const ringR = startR + (target - startR) * cue.progress;
     const flicker = 0.5 + 0.5 * Math.sin(this.t * 36);
+    const col = cue.color;
 
-    // 1. Body glow (grows through the tell; pulses once the window is open).
-    g.fillStyle(def.color, 0.14 + 0.28 * progress + (inWindow ? 0.14 * flicker : 0));
-    g.fillCircle(0, 2, r + 5);
+    // 1. Body glow — grows through the cue and goes aggressive once the window is open.
+    g.fillStyle(cue.inWindow ? 0xffffff : col, 0.14 + 0.28 * cue.progress + (cue.inWindow ? 0.3 * flicker : 0));
+    g.fillCircle(0, 2, r + 5 + (cue.inWindow ? 4 : 0));
 
-    // 2. Window band (where the ring is when a press succeeds) + target ring + moving ring.
-    const openR = startR + (target - startR) * (1 - winFrac);
-    g.lineStyle(openR - target + 6, def.color, 0.16);
-    g.strokeCircle(0, 2, (openR + target) / 2);
-    g.lineStyle(3, def.color, 0.95);
-    g.strokeCircle(0, 2, target);
-    g.lineStyle(inWindow ? 6 : 3, inWindow ? 0xffffff : def.color, 1);
-    g.strokeCircle(0, 2, ringR);
+    // 2. Window band + fixed target ring + the moving ring.
+    const openR = startR + (target - startR) * cue.openAt;
+    g.lineStyle(openR - target + 6, col, 0.16);
+    this.strokeCueRing(g, cue.shape, (openR + target) / 2, false);
+    g.lineStyle(3, col, 0.95);
+    this.strokeCueRing(g, cue.shape, target, false);
+    g.lineStyle(cue.inWindow ? 6 : 3, cue.inWindow ? 0xffffff : col, 1);
+    this.strokeCueRing(g, cue.shape, ringR, true);
 
-    // 3 + 4. Shape badge (+ key letter) — only when a human is defending against it.
-    const hint = this.tellHint;
-    if (!hint) {
-      this.tellText.setVisible(false);
-      return;
-    }
-    const by = -64;
-    const k = inWindow ? 1.2 + 0.1 * flicker : 1;
+    // 3. The instant the window opens: an expanding flash.
+    if (cue.inWindow && !this.cueIn) this.cueBurst = CUE_BURST_TIME;
+    this.cueIn = cue.inWindow;
+    this.drawBurst(g, r);
+
+    // 4. Badge (shape per move) and/or label.
+    const by = cue.badgeY;
+    const k = (cue.inWindow ? 1.2 + 0.1 * flicker : 1) * cue.labelScale;
     const br = 13 * k;
-    g.fillStyle(inWindow ? 0xffffff : def.color, 0.97);
-    g.lineStyle(3, 0x000000, 1);
-    if (this.move === 'deke') {
-      const pts = [{ x: 0, y: by - br * 1.2 }, { x: br * 1.2, y: by }, { x: 0, y: by + br * 1.2 }, { x: -br * 1.2, y: by }];
-      g.fillPoints(pts, true);
-      g.strokePoints(pts, true);
-    } else if (this.move === 'crossover') {
-      g.fillRect(-br, by - br, br * 2, br * 2);
-      g.strokeRect(-br, by - br, br * 2, br * 2);
-    } else {
-      g.fillCircle(0, by, br);
-      g.strokeCircle(0, by, br);
+    if (cue.badge !== 'none') {
+      g.fillStyle(cue.inWindow ? 0xffffff : col, 0.97);
+      g.lineStyle(3, 0x000000, 1);
+      if (cue.badge === 'diamond') {
+        const pts = [{ x: 0, y: by - br * 1.2 }, { x: br * 1.2, y: by }, { x: 0, y: by + br * 1.2 }, { x: -br * 1.2, y: by }];
+        g.fillPoints(pts, true);
+        g.strokePoints(pts, true);
+      } else if (cue.badge === 'square') {
+        g.fillRect(-br, by - br, br * 2, br * 2);
+        g.strokeRect(-br, by - br, br * 2, br * 2);
+      } else {
+        g.fillCircle(0, by, br);
+        g.strokeCircle(0, by, br);
+      }
     }
-    this.tellText.setVisible(hint.showKey);
-    if (hint.showKey) {
-      this.tellText.setText((ACTION_KEYS[this.move][0] ?? '').toUpperCase());
+    this.tellText.setVisible(cue.label !== null);
+    if (cue.label !== null) {
+      this.tellText.setText(cue.label);
       this.tellText.setPosition(0, by);
       this.tellText.setScale(k);
     }
+  }
+
+  private drawBurst(g: Phaser.GameObjects.Graphics, r: number): void {
+    if (this.cueBurst <= 0) return;
+    const k = 1 - this.cueBurst / CUE_BURST_TIME;
+    g.lineStyle(2 + 7 * (1 - k), 0xffffff, 1 - k);
+    g.strokeCircle(0, 2, r + 10 + 66 * k);
   }
 
   private draw(): void {
@@ -424,16 +498,6 @@ export class Player {
       g.strokeCircle(0, 0, r - 4);
     }
 
-    // Perfect-shot tell (goalie only): while the shooter's charge is in the
-    // perfect zone the goalie flashes white — that flash IS the timing tell.
-    if (this.shotTell) {
-      const pulse = 0.5 + 0.5 * Math.sin(this.t * 30);
-      g.lineStyle(3, 0xffffff, 0.4 + 0.6 * pulse);
-      g.strokeCircle(0, 0, r + 6);
-      g.fillStyle(0xffffff, 0.12 + 0.22 * pulse);
-      g.fillCircle(0, 0, r + 2);
-    }
-
     // Check (block) stance: a translucent wall the size of the check radius.
     if (this.guardT > 0) {
       const gr = this.guardRadius();
@@ -465,7 +529,36 @@ export class Player {
       bladeColor = def.color;
       stickAlpha = inWindow ? 0.8 + 0.2 * Math.sin(this.t * 42) : 0.35 + 0.2 * Math.sin(this.t * 30);
     }
-    this.drawTell(g, r, telling, progress, winFrac, inWindow);
+    let cue: Cue | null = null;
+    if (telling && this.move) {
+      const def = MOVE_DEFS[this.move];
+      const hint = this.tellHint;
+      cue = {
+        color: def.color,
+        progress,
+        openAt: 1 - winFrac,
+        inWindow,
+        shape: this.move === 'spin' ? 'spin' : this.move === 'deke' ? 'diamond' : 'circle',
+        badge: !hint ? 'none' : this.move === 'deke' ? 'diamond' : this.move === 'crossover' ? 'square' : 'circle',
+        label: hint?.showKey ? (ACTION_KEYS[this.move][0] ?? '').toUpperCase() : null,
+        labelScale: 1,
+        badgeY: -64,
+      };
+    } else if (this.shotCue) {
+      // The enemy is charging a shot: the goalie shows the release window.
+      cue = {
+        color: 0xffd166,
+        progress: this.shotCue.progress,
+        openAt: this.shotCue.openAt,
+        inWindow: this.shotCue.inWindow,
+        shape: 'circle',
+        badge: 'none',
+        label: this.shotCue.inWindow ? 'SHOOT!' : null,
+        labelScale: 1.25,
+        badgeY: -(r + 46),
+      };
+    }
+    this.drawCue(g, r, cue);
 
     const a = this.stickAngle();
     const dx = Math.cos(a);

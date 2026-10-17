@@ -32,7 +32,6 @@ export const AI_SPEED_FACTOR = 0.9; // the user's AI TEAMMATES skate at this × 
 export const PASS_SPEED = 470;
 export const CHARGE_TIME = 0.65; // s from tap to full charge
 export const SHOT_SPEED_MIN = 430;
-export const SHOT_SPREAD = 0.5; // max corner angle (rad) when shooting at the goal
 export const FAST_PUCK_SPEED = 350; // above this, a grab is a skill contest, not automatic
 export const SHOT_SPEED_MAX = 660;
 export const SHOT_RANGE = 290; // AI shoots when closer than this to the goal
@@ -67,6 +66,18 @@ export const TUMBLE_TIME = 0.5; // s of tumble anim after a whiff / knockback
 // The tell for the shooter is the enemy goalie flashing white while in the zone.
 export const PERFECT_SHOT_CHARGE = 0.8;
 export const PERFECT_SHOT_MULT = 1.18;
+// The perfect zone is a WINDOW, not "hold long enough": after reaching full charge
+// you get OVERCHARGE_GRACE seconds at full, then the charge bleeds away at
+// OVERCHARGE_DECAY per second (dropping back under PERFECT_SHOT_CHARGE ends the window).
+// Set OVERCHARGE_GRACE very large to get the old "holding is never worse" behaviour.
+export const OVERCHARGE_GRACE = 0.15;
+export const OVERCHARGE_DECAY = 2.0;
+
+// Shot aiming: while charging you are locked onto the goal; Up/Down slides a
+// reticle along the goal mouth (-1 = top post … +1 = bottom post, always on net).
+export const AIM_SLIDE_SPEED = 1.9; // reticle units per second while holding Up/Down
+export const AIM_POST_MARGIN = 16; // px kept inside the posts at aim = ±1 (puck radius + slack)
+export const CHARGE_SKATE = 0.6; // speed factor for left/right skating while charging (Up/Down aim instead)
 
 // Check (defense, Enter/Shift) = a BLOCK. It never steals. The defender plants
 // and becomes a wall: opponents can't push through, and a juke that resolves

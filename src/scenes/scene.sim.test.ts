@@ -91,7 +91,7 @@ describe('human defense', () => {
     const { s, def, car } = defenseSetup('deke');
     const win = windowSeconds(car.tellDur, def.stats.parryFrac);
     while (car.moveT < car.tellDur - win / 2) step(s);
-    press('K'); step(s); release('K'); step(s, 2);
+    press('F'); step(s); release('F'); step(s, 2);
     expect(s.puck.carriedBy).toBe(def);
     expect(car.move).toBeNull();
   });
@@ -99,7 +99,7 @@ describe('human defense', () => {
   it('pressing too early whiffs (and says why) — carrier keeps the puck', () => {
     const { s, popups, def, car } = defenseSetup('deke');
     step(s, 5);
-    press('K'); step(s); release('K');
+    press('F'); step(s); release('F');
     expect(popups).toContain('TOO EARLY');
     expect(def.stagger).toBeGreaterThan(0.3);
     expect(s.puck.carriedBy).toBe(car);
@@ -109,7 +109,7 @@ describe('human defense', () => {
     const { s, popups, def, car } = defenseSetup('deke');
     const win = windowSeconds(car.tellDur, def.stats.parryFrac);
     while (car.moveT < car.tellDur - win / 2) step(s);
-    press('J'); step(s); release('J');
+    press('E'); step(s); release('E');
     expect(popups).toContain('WRONG MOVE');
     expect(s.puck.carriedBy).toBe(car);
   });
@@ -161,7 +161,7 @@ describe('human offense vs AI defender (Monte Carlo, 1 defender, 45px away, you 
     unfreeze(me, 500, 300); unfreeze(ai, 545, 300);
     s.grantPuck(me);
     s.diff = difficultyAt(level);
-    press('J'); step(s); release('J');
+    press('E'); step(s); release('E');
     step(s, 100);
     const stolen = s.puck.carriedBy?.team === 1;
     const ev = popups.find((p) => ['PARRY!', 'BLOCKED', 'TOO EARLY', 'TOO LATE', 'WRONG MOVE'].includes(p));
@@ -230,7 +230,7 @@ describe('juke payoff for the player (the "moves felt bad" regression)', () => {
     H.keys.get('D').isDown = true;
     step(s, 40);
     if (move) {
-      const k = H.keys.get(move === 'spin' ? 'J' : 'K'); k._just = true; k.isDown = true; step(s); k.isDown = false;
+      const k = H.keys.get(move === 'spin' ? 'E' : 'F'); k._just = true; k.isDown = true; step(s); k.isDown = false;
       while (me.move && !me.moveResolved) step(s);
       step(s); // resolution frame has applied the dash
     }
@@ -254,12 +254,142 @@ describe('juke payoff for the player (the "moves felt bad" regression)', () => {
     const me = s.players[0];
     unfreeze(me, 300, 200); s.grantPuck(me);
     H.keys.get('D').isDown = true; step(s, 20);
-    const k = H.keys.get('K'); k._just = true; k.isDown = true; step(s); k.isDown = false;
+    const k = H.keys.get('F'); k._just = true; k.isDown = true; step(s); k.isDown = false;
     H.keys.get('D').isDown = false; H.keys.get('S').isDown = true; // swap direction mid-tell
     const y0 = me.pos.y;
     while (me.move && !me.moveResolved) step(s);
     step(s, 12);
     H.keys.get('S').isDown = false;
     expect(me.pos.y - y0).toBeGreaterThan(40);
+  });
+});
+
+const hold = (code: string, on = true) => { const k = H.keys.get(code); k.isDown = on; if (on) k._just = true; };
+const releaseAll = () => { for (const k of H.keys.values()) { k.isDown = false; k._just = false; } };
+
+describe('controls: arrows + left-hand E/F', () => {
+  const offense = () => {
+    releaseAll();
+    const { s, popups } = makeScene(0);
+    const me = s.players[0];
+    unfreeze(me, 400, 300); s.grantPuck(me);
+    return { s, popups, me };
+  };
+  it('arrow keys skate', () => {
+    for (const [code, axis, sign] of [['RIGHT', 'x', 1], ['LEFT', 'x', -1], ['UP', 'y', -1], ['DOWN', 'y', 1]] as const) {
+      const { s, me } = offense();
+      const p0 = me.pos[axis];
+      hold(code); step(s, 30); hold(code, false);
+      expect((me.pos[axis] - p0) * sign).toBeGreaterThan(30);
+    }
+  });
+  it('E = Spin and F = Deke (J / K still work as alternates)', () => {
+    for (const [code, move] of [['E', 'spin'], ['F', 'deke'], ['J', 'spin'], ['K', 'deke']] as const) {
+      const { s, me } = offense();
+      press(code); step(s); release(code);
+      expect(me.move).toBe(move);
+    }
+  });
+  it('the on-screen key hint shows the primary keys (E / F)', async () => {
+    const { ACTION_KEYS } = await import('../config/bindings');
+    expect(ACTION_KEYS.spin[0]).toBe('E');
+    expect(ACTION_KEYS.deke[0]).toBe('F');
+  });
+});
+
+describe('shooting: lock-on aim + a real release window', () => {
+  const setup = (x = 700, y = 300) => {
+    releaseAll();
+    const { s, popups } = makeScene(0);
+    const me = s.players[0];
+    unfreeze(me, x, y); s.grantPuck(me);
+    const goalie = s.players.find((p: any) => p.team === 1 && p.isGoalie);
+    return { s, popups, me, goalie };
+  };
+  /** Charge for `frames` with optional held keys, then release; return the puck's launch speed. */
+  const shoot = (s: any, frames: number, keys: string[] = []) => {
+    hold('SHIFT'); for (const k of keys) hold(k);
+    step(s, frames);
+    hold('SHIFT', false); for (const k of keys) hold(k, false);
+    step(s, 1);
+    return Math.hypot(s.puck.vel.x, s.puck.vel.y);
+  };
+
+  it('UP/DOWN slide the aim reticle while charging and do NOT skate you vertically', () => {
+    const { s, me } = setup();
+    hold('SHIFT'); hold('DOWN');
+    step(s, 12); // 0.2s
+    expect(me.aimY).toBeGreaterThan(0.25);
+    expect(me.aimY).toBeLessThan(0.55);
+    step(s, 20);
+    expect(Math.abs(me.pos.y - 300)).toBeLessThan(3);
+    hold('DOWN', false); hold('UP');
+    step(s, 30);
+    expect(me.aimY).toBeLessThan(0.2); // it slid back up
+    releaseAll();
+  });
+
+  it('LEFT/RIGHT still skate while charging, but slower than normal', () => {
+    const run = (charge: boolean) => {
+      const { s, me } = setup(500, 300);
+      if (charge) hold('SHIFT');
+      hold('RIGHT'); step(s, 30);
+      const x = me.pos.x; releaseAll();
+      return x - 500;
+    };
+    const free = run(false), charging = run(true);
+    expect(charging).toBeGreaterThan(15);
+    expect(charging).toBeLessThan(free * 0.85);
+  });
+
+  it('aim is ALWAYS on net: full-up, centre and full-down shots all score, from every angle', () => {
+    for (const [x, y] of [[900, 300], [800, 140], [800, 460], [600, 300], [980, 200]]) {
+      for (const keys of [['UP'], [], ['DOWN']]) {
+        const { s } = setup(x, y);
+        shoot(s, 40, keys); // 0.67s ≈ full charge
+        for (let i = 0; i < 160 && s.score[0] === 0; i++) step(s);
+        expect({ from: [x, y], aim: keys[0] ?? 'centre', scored: s.score[0] }).toEqual({ from: [x, y], aim: keys[0] ?? 'centre', scored: 1 });
+      }
+    }
+  });
+
+  it('release inside the window is PERFECT (and faster); over-holding past it is not', () => {
+    const early = setup(); const perfect = setup(); const late = setup();
+    const vEarly = shoot(early.s, 12);
+    const vPerfect = shoot(perfect.s, 36); // 0.6s — inside the window
+    const vLate = shoot(late.s, 100); // 1.67s — charge has bled away
+    expect(perfect.popups).toContain('!');
+    expect(early.popups).not.toContain('!');
+    expect(late.popups).not.toContain('!');
+    expect(vPerfect).toBeGreaterThan(vEarly);
+    expect(vPerfect).toBeGreaterThan(vLate * 1.3); // holding too long is worse than releasing on time
+  });
+
+  it('the goalie shows the release window while you charge — and only then', () => {
+    const { s, goalie } = setup();
+    step(s, 3);
+    expect(goalie.shotCue).toBeNull();
+    hold('SHIFT');
+    step(s, 15);
+    expect(goalie.shotCue).not.toBeNull();
+    expect(goalie.shotCue.inWindow).toBe(false);
+    expect(goalie.shotCue.progress).toBeGreaterThan(0);
+    step(s, 25); // ~0.67s
+    expect(goalie.shotCue.inWindow).toBe(true);
+    step(s, 40); // over-held: window has closed again
+    expect(goalie.shotCue.inWindow).toBe(false);
+    hold('SHIFT', false);
+    step(s, 2);
+    expect(goalie.shotCue).toBeNull();
+  });
+
+  it('starting a juke cancels a charge in progress', () => {
+    const { s, me } = setup();
+    hold('SHIFT'); step(s, 20);
+    expect(me.charging).toBe(true);
+    press('F'); step(s); release('F');
+    expect(me.charging).toBe(false);
+    expect(me.move).toBe('deke');
+    releaseAll();
   });
 });

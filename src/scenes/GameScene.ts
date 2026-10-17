@@ -1,16 +1,17 @@
 import Phaser from 'phaser';
 import {
-  AI_SPEED_FACTOR, CHARGE_TIME, CHECK_COOLDOWN, CHECK_TIME, COUNTER_BURST,
+  AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_COOLDOWN, CHECK_TIME, COUNTER_BURST,
   DROP_TIME, GOALIE_SAVE_COOLDOWN, GOALIE_SAVE_DEFLECT_SPEED,
   GOALIE_SAVE_RADIUS, GOALS_TO_WIN, GOAL_PAUSE, PARRY_RANGE, PASS_SPEED, PICKUP_DELAY,
   PICKUP_RADIUS, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT, SHOT_SPEED_MAX,
-  SHOT_SPEED_MIN, SHOT_SPREAD, FAST_PUCK_SPEED, STUFF_STAGGER_BASE, STUFF_STAGGER_PER_DEF,
+  SHOT_SPEED_MIN, FAST_PUCK_SPEED, STUFF_STAGGER_BASE, STUFF_STAGGER_PER_DEF,
   TELL_STEER, TUMBLE_TIME,
 } from '../config/gameplay';
 import { DEFAULT_LEVEL, difficultyAt, type Difficulty } from '../config/difficulty';
 import { CENTER_X, CENTER_Y, GAME_HEIGHT, ICE_X, RINK_W } from '../config/rink';
 import { OPPONENTS, USER_TEAM, type Team } from '../config/teams';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
+import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
 import { ALL_MOVES, dashSpeedAt, MOVE_DEFS, parryTiming, windowSeconds, type MoveId } from '../core/moves';
 import { deriveStats } from '../core/stats';
 import { stepAI, type AIWorld } from '../gameplay/ai';
@@ -37,6 +38,8 @@ export class GameScene extends Phaser.Scene {
   private state: MatchState = 'drop';
   private stateTimer = 0;
   private controlled: Player | null = null;
+  private aimG!: Phaser.GameObjects.Graphics; // shot-aim reticle + guide
+  private trailTick = 0;
   private manualPick: Player | null = null; // defender the user picked with SPACE (sticks until possession changes)
   private diff: Difficulty = difficultyAt(DEFAULT_LEVEL);
   private opponentIdx = 0;
@@ -74,11 +77,13 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0);
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
-        'WASD move · SPACE pass / switch · hold Enter = shoot (≥80% = perfect) · J Spin / K Deke (defense: press the SAME key as the tell during the white ring) · Enter = CHECK (block, no steal) · R restart',
+        'Arrows / WASD move · SPACE pass / switch · hold SHIFT = shoot (↑/↓ aims, release when the goalie ring turns white)\n' +
+          'E Spin · F Deke   (defending: press the SAME key when the ring turns white) · SHIFT = CHECK (block, no steal) · R restart',
         {
           fontFamily: 'monospace',
           fontSize: '13px',
           color: '#8b98ab',
+          align: 'center',
         })
       .setOrigin(0.5, 1);
 
@@ -86,6 +91,7 @@ export class GameScene extends Phaser.Scene {
       if (this.state === 'over') this.restart();
     });
 
+    this.aimG = this.add.graphics().setDepth(18);
     this.setState('drop');
   }
 
@@ -152,42 +158,59 @@ export class GameScene extends Phaser.Scene {
       const c = this.controlled;
       const dir = this.controls.direction();
       const committed = !!c.move && !c.moveResolved; // winding up a juke
+      // Charging a shot locks you onto the goal: Up/Down slides the aim along the
+      // goal mouth instead of skating you up/down; Left/Right still skate (slower).
+      const wantsCharge = c.carrying && this.controls.held('shoot') && !committed && c.stagger <= 0;
+      let moveDir = dir;
+      let moveFactor = 1;
+      if (wantsCharge) {
+        moveDir = dir.x ? v(Math.sign(dir.x), 0) : v();
+        moveFactor = CHARGE_SKATE;
+      }
       if (c.stagger > 0) c.coast(dt);
       else if (committed) {
         // Mid-tell you can still shuffle (reduced control) — and where you
-        // point at the end of the tell is where the burst goes.
+        // point at the end of the tell is where the dash goes.
         if (dir.x || dir.y) c.applyInput(dir, dt, TELL_STEER);
         else c.coast(dt);
-      } else if (dir.x || dir.y) c.applyInput(dir, dt);
+      } else if (moveDir.x || moveDir.y) c.applyInput(moveDir, dt, moveFactor);
       else c.coast(dt);
 
       if (c.carrying) {
-        // Offense: pass, charge-shot (perfect at >= 80%), juke (J/K/L).
+        // Offense: pass, charge-shot (release inside the window = perfect), juke (E/F).
         if (this.controls.justPressed('pass') && !committed) this.userPass(c);
-        if (this.controls.held('shoot') && !committed) {
-          c.charging = true;
-          c.charge = Math.min(1, c.charge + dt / CHARGE_TIME);
-          // Charging snaps the stick toward the goal; up/down while holding
-          // adjusts the corner (applied at release in shootPuck).
+        if (wantsCharge) {
+          if (!c.charging) {
+            c.charging = true;
+            c.holdT = 0;
+            c.aimY = 0;
+          }
+          c.holdT += dt;
+          c.charge = chargeFromHold(c.holdT);
+          c.aimY = clamp(c.aimY + dir.y * AIM_SLIDE_SPEED * dt, -1, 1);
+          // Lock the stick onto the aim point.
           const gx = c.team === 0 ? ICE_X + RINK_W : ICE_X;
-          const target = Math.atan2(CENTER_Y - c.pos.y, gx - c.pos.x);
+          const target = Math.atan2(aimTargetY(c.aimY) - c.pos.y, gx - c.pos.x);
           let diff = target - c.facing;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
           c.facing += diff * Math.min(1, dt * 14);
         } else if (c.charging || c.charge > 0) {
-          this.shootPuck(c, dir, c.charge);
+          this.shootPuck(c, c.aimY, c.charge);
           c.charging = false;
           c.charge = 0;
+          c.holdT = 0;
+          c.aimY = 0;
         }
         for (const id of ALL_MOVES) {
           if (!c.move && this.controls.justPressed(id)) c.startMove(id);
         }
       } else {
-        // Defense: check (Enter/Shift), parry (J/K/L = the move's key).
+        // Defense: check (Shift/Enter), parry (E/F = the move's key).
         if (c.charging) {
           c.charging = false;
           c.charge = 0;
+          c.holdT = 0;
         }
         if (this.controls.justPressed('shoot')) this.doCheck(c);
         for (const id of ALL_MOVES) {
@@ -195,11 +218,22 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // Perfect-shot tell: the enemy goalie flashes white while the user's
-      // charge is in the perfect zone.
-      for (const p of this.players) p.shotTell = false;
+      // Perfect-shot cue: the enemy goalie shows a shrinking ring + the release window
+      // (same grammar as a juke tell), and flashes SHOOT! while the window is open.
+      for (const p of this.players) p.shotCue = null;
       const eg = this.players.find((p) => p.team === 1 && p.isGoalie);
-      if (eg && c.carrying && c.charging && c.charge >= PERFECT_SHOT_CHARGE) eg.shotTell = true;
+      if (eg && c.carrying && c.charging) {
+        const { open, close } = perfectWindowHold();
+        eg.shotCue = {
+          progress: Math.min(1, c.holdT / close),
+          openAt: open / close,
+          inWindow: c.charge >= PERFECT_SHOT_CHARGE,
+        };
+      }
+      this.drawAim(c);
+    } else {
+      this.aimG.clear();
+      for (const p of this.players) p.shotCue = null;
     }
 
     // 3. AI: one chaser per team; everyone else zones / carries / goalies.
@@ -227,7 +261,7 @@ export class GameScene extends Phaser.Scene {
       rng: Math.random,
       diff: this.diff,
       pass: (f, m) => this.doPass(f, m),
-      shoot: (f, dir, charge) => this.shootPuck(f, dir, charge),
+      shoot: (f, aimY, charge) => this.shootPuck(f, aimY, charge),
       parry: (d, _carrier, key) => this.tryParry(d, key),
       check: (d) => this.doCheck(d),
     };
@@ -409,18 +443,18 @@ export class GameScene extends Phaser.Scene {
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.25);
   }
 
-  private shootPuck(from: Player, dirIn: Vec2, charge: number): void {
-    // Goal-anchored aim: the base direction is the goal-mouth center and the
-    // input's lateral component picks the corner. Most of the range is the
-    // net itself; holding up/down at full can still shoot a bit wide.
+  /**
+   * Shoot at a point on the goal mouth (`aimY` −1 top post … +1 bottom post;
+   * beyond ±1 is wide — only the AI does that). See core/shot.ts.
+   */
+  private shootPuck(from: Player, aimY: number, charge: number): void {
     const goalX = from.team === 0 ? ICE_X + RINK_W : ICE_X;
-    const toGoal = norm(sub(v(goalX, CENTER_Y), from.pos));
-    const perp = v(-toGoal.y, toGoal.x);
-    const lateral = clamp(dirIn.x * perp.x + dirIn.y * perp.y, -1, 1);
-    const a = Math.atan2(toGoal.y, toGoal.x) + lateral * SHOT_SPREAD;
-    const aim = v(Math.cos(a), Math.sin(a));
-    // Perfect shot: release with charge in the perfect zone (the goalie
-    // flash was the tell) → bonus power and a “!” over the shooter.
+    // Aim from where the PUCK is (it sits on the blade, off to one side of the
+    // player) — aiming from the player's centre put full-corner shots on the post.
+    const origin = this.puck.state === 'carried' && this.puck.carriedBy === from ? this.puck.pos : from.pos;
+    const aim = shotDirection(origin, goalX, aimY);
+    // Perfect shot: release with charge in the perfect window (the goalie's
+    // ring/flash is the tell) → bonus power and a “!” over the shooter.
     const perfect = from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
@@ -540,6 +574,7 @@ export class GameScene extends Phaser.Scene {
     p.dashDir = dir;
     p.dashSpeed = def.dash * p.stats.skill;
     p.vel = scale(dir, dashSpeedAt(p.dashSpeed, 0));
+    this.launchFx(p, id);
     // Knock nearby defenders back (biased behind the carrier's travel) and stun them.
     for (const o of this.players) {
       if (o.team === p.team || o.isGoalie || o.down) continue;
@@ -553,11 +588,69 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Short-lived afterimage while a landed move's burst plays out. */
+  /**
+   * Afterimages while a landed move's dash plays out — a different look per move
+   * so you can tell them apart even after the tell is over:
+   *   Spin → expanding ripple rings (it's a swirl);  Deke → straight speed
+   *   streaks + diamond ghosts (it's a sharp cut).
+   */
   private trail(p: Player): void {
-    if (!p.move) return;
-    const c = this.add.circle(p.pos.x, p.pos.y, 11, MOVE_DEFS[p.move].color, 0.45).setDepth(0.5);
-    this.tweens.add({ targets: c, alpha: 0, scale: 0.4, duration: 260, onComplete: () => c.destroy() });
+    if (!p.move || !p.dashDir) return;
+    this.trailTick++;
+    const col = MOVE_DEFS[p.move].color;
+    if (p.move === 'spin') {
+      if (this.trailTick % 3 !== 0) return;
+      const ring = this.add.circle(p.pos.x, p.pos.y, 14, col, 0).setStrokeStyle(4, col, 0.8).setDepth(0.5);
+      this.tweens.add({ targets: ring, scale: 2.8, alpha: 0, duration: 340, onComplete: () => ring.destroy() });
+      return;
+    }
+    const dir = p.dashDir;
+    const ang = Math.atan2(dir.y, dir.x);
+    for (const off of [-9, 0, 9]) {
+      const x = p.pos.x - dir.x * 22 - dir.y * off;
+      const y = p.pos.y - dir.y * 22 + dir.x * off;
+      const streak = this.add.rectangle(x, y, 44, 4, col, 0.6).setRotation(ang).setDepth(0.5);
+      this.tweens.add({ targets: streak, alpha: 0, scaleX: 0.3, duration: 240, onComplete: () => streak.destroy() });
+    }
+    if (this.trailTick % 3 === 0) {
+      const ghost = this.add.rectangle(p.pos.x, p.pos.y, 22, 22, col, 0.35).setRotation(Math.PI / 4).setDepth(0.4);
+      this.tweens.add({ targets: ghost, alpha: 0, scale: 1.6, duration: 280, onComplete: () => ghost.destroy() });
+    }
+  }
+
+  /** One-shot flash at the moment a move lands (matches the move's shape). */
+  private launchFx(p: Player, id: MoveId): void {
+    const col = MOVE_DEFS[id].color;
+    if (id === 'deke') {
+      const d = this.add.rectangle(p.pos.x, p.pos.y, 26, 26, col, 0).setStrokeStyle(5, col, 0.95).setRotation(Math.PI / 4).setDepth(0.6);
+      this.tweens.add({ targets: d, scale: 3.4, alpha: 0, duration: 320, onComplete: () => d.destroy() });
+    } else {
+      const c = this.add.circle(p.pos.x, p.pos.y, 18, col, 0).setStrokeStyle(6, col, 0.95).setDepth(0.6);
+      this.tweens.add({ targets: c, scale: 3.6, alpha: 0, duration: 380, onComplete: () => c.destroy() });
+    }
+  }
+
+  /** Aim reticle on the goal mouth + a dotted guide from the shooter while charging. */
+  private drawAim(c: Player): void {
+    const g = this.aimG;
+    g.clear();
+    if (!c.carrying || !c.charging) return;
+    const gx = c.team === 0 ? ICE_X + RINK_W : ICE_X;
+    const ty = aimTargetY(c.aimY);
+    const inWin = c.charge >= PERFECT_SHOT_CHARGE;
+    const col = inWin ? 0xffffff : 0xffd166;
+    const o = this.puck.state === 'carried' && this.puck.carriedBy === c ? this.puck.pos : c.pos;
+    const dx = gx - o.x;
+    const dy = ty - o.y;
+    const n = Math.max(1, Math.floor(Math.hypot(dx, dy) / 22));
+    g.fillStyle(col, 0.35);
+    for (let i = 1; i < n; i++) g.fillCircle(o.x + (dx * i) / n, o.y + (dy * i) / n, 2.2);
+    const pulse = inWin ? 1 + 0.15 * Math.sin(this.time.now * 0.03) : 1;
+    g.lineStyle(3, col, 0.95);
+    g.strokeCircle(gx, ty, 11 * pulse);
+    for (const [ax, ay] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      g.lineBetween(gx + ax * 15 * pulse, ty + ay * 15 * pulse, gx + ax * 24 * pulse, ty + ay * 24 * pulse);
+    }
   }
 
   /** Small floating popup ("!" for perfect shots, PARRY!, BLOCKED, TOO EARLY…). */
@@ -622,7 +715,9 @@ export class GameScene extends Phaser.Scene {
       p.checkCd = 0;
       p.guardT = 0;
       p.tellHint = null;
-      p.shotTell = false;
+      p.shotCue = null;
+      p.holdT = 0;
+      p.aimY = 0;
     }
     this.puck.reset(CENTER_X, CENTER_Y);
     this.manualPick = null;

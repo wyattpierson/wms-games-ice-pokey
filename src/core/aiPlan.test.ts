@@ -97,6 +97,14 @@ describe('difficulty', () => {
     expect(b.aiTellScale).toBeGreaterThan(d.aiTellScale);
     expect(b.aiReaction).toBeGreaterThan(d.aiReaction);
   });
+  it('AI shooting: sloppy at level 0 (some shots wide), always on net at level 1', () => {
+    const wide = (lv: number) => {
+      const spread = difficultyAt(lv).aiShotSpread;
+      return Math.max(0, (spread - 1) / spread); // P(|aim| > 1) for aim ~ U(-spread, spread)
+    };
+    expect(wide(0)).toBeGreaterThan(0.2);
+    expect(wide(1)).toBe(0);
+  });
   it('starts slow, reads the key for you, and ends at full speed without hints', () => {
     expect(difficultyAt(0).aiSpeed).toBeLessThan(0.6);
     expect(difficultyAt(0).showKeyHint).toBe(true);
