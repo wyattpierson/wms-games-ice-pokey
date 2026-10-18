@@ -17,13 +17,13 @@ describe('serializeRun / parseRun round trip', () => {
   });
 
   it('a mid-run state (results, poach, pending poach) survives the round trip', () => {
-    let s = startMatch(newRun(), 'tidal-wave');
-    s = recordResult(s, 'tidal-wave', 'win');
-    expect(s.pendingPoach).toBe('tidal-wave');
+    let s = startMatch(newRun(), 'knuckle-club');
+    s = recordResult(s, 'knuckle-club', 'win');
+    expect(s.pendingPoach).toBe('knuckle-club');
     expect(parseRun(serializeRun(s))).toEqual(s);
-    s = applyPoach(s, 'field', 'tidal-wave', 1, 1);
+    s = applyPoach(s, 'field', 'knuckle-club', 1, 1);
     expect(parseRun(serializeRun(s))).toEqual(s);
-    expect(s.userTeam.players[1].name).toBe('Lapras');
+    expect(s.userTeam.players[1].name).toBe('Hitmonchan');
   });
 });
 
@@ -49,7 +49,7 @@ describe('parseRun rejects bad input', () => {
   });
 
   it('bad outcome value', () => {
-    expect(parseRun(mutate(newRun(), (d) => (d.results = { 'tidal-wave': 'tie' })))).toBeNull();
+    expect(parseRun(mutate(newRun(), (d) => (d.results = { 'knuckle-club': 'tie' })))).toBeNull();
   });
 
   it('non-boolean gameOver / victory', () => {
@@ -68,11 +68,11 @@ describe('parseRun rejects bad input', () => {
 
   it('poaches entries must be well-formed', () => {
     const good = [
-      { fromTeamId: 'tidal-wave', side: 'field', taken: 'Lapras', dropped: 'Charizard' },
+      { fromTeamId: 'knuckle-club', side: 'field', taken: 'Pawmot', dropped: 'Psyduck' },
     ];
     const ok = mutate(newRun(), (d) => (d.poaches = good));
     expect(parseRun(ok)).not.toBeNull();
-    const badSide = mutate(newRun(), (d) => (d.poaches = [{ fromTeamId: 'tidal-wave', side: 'mid', taken: 'L', dropped: 'C' }]));
+    const badSide = mutate(newRun(), (d) => (d.poaches = [{ fromTeamId: 'knuckle-club', side: 'mid', taken: 'L', dropped: 'C' }]));
     expect(parseRun(badSide)).toBeNull();
     const missingField = mutate(newRun(), (d) => (d.poaches = [{ side: 'field', taken: 'L', dropped: 'C' }]));
     expect(parseRun(missingField)).toBeNull();
@@ -108,9 +108,9 @@ describe('parseRun validates the user roster', () => {
   it('a saved roster with poached players (not in any campaign team) still parses', () => {
     // The save stores the roster verbatim; player names/sprites are not cross-checked
     // against campaign teams, so a poached Mewtwo on the user team is valid.
-    let s = startMatch(newRun(), 'tidal-wave');
-    s = recordResult(s, 'tidal-wave', 'win');
-    s = applyPoach(s, 'field', 'tidal-wave', 1, 1);
+    let s = startMatch(newRun(), 'knuckle-club');
+    s = recordResult(s, 'knuckle-club', 'win');
+    s = applyPoach(s, 'field', 'knuckle-club', 1, 1);
     const raw = serializeRun(s);
     expect(parseRun(raw)).not.toBeNull();
     expect(USER_TEAM.players.map((p) => p.name)).not.toEqual(s.userTeam.players.map((p) => p.name));

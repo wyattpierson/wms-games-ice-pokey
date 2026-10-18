@@ -70,6 +70,7 @@ export class GameScene extends Phaser.Scene {
   private hintText!: Phaser.GameObjects.Text;
 
   init(data?: MatchConfig | GameData): void {
+    this.resetMatchState();
     if (data && 'userTeam' in data) {
       // Campaign match: explicit roster, opponent and AI level.
       const c = data as MatchConfig;
@@ -83,6 +84,25 @@ export class GameScene extends Phaser.Scene {
       this.opponentIdx = g?.opponentIndex ?? readOpponentParam();
       this.diff = difficultyAt(readLevelParam());
     }
+  }
+
+  /**
+   * Phaser creates ONE instance of each scene and re-runs init()/create() on every
+   * scene.start() — class-field initialisers only run once, so per-match state has to be
+   * reset here or it leaks into the next match (a 3–1 win used to carry its score over and
+   * end the next match on the first goal).
+   */
+  private resetMatchState(): void {
+    this.score = [0, 0];
+    this.state = 'drop';
+    this.stateTimer = 0;
+    this.clock = 0;
+    this.trailTick = 0;
+    this.controlled = null;
+    this.manualPick = null;
+    this.oneTimerArmed = null;
+    this.pauseOverlay = null;
+    this.campaign = false;
   }
 
   create(): void {
@@ -155,6 +175,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.aimG = this.add.graphics().setDepth(18);
+    this.updateScoreText(); // show 0 — 0 at kickoff (it used to stay blank until the first goal)
     this.setState('drop');
   }
 

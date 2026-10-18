@@ -44,6 +44,7 @@ vi.mock('phaser', () => {
 import { difficultyAt } from '../config/difficulty';
 import { MOVE_DEFS, windowSeconds } from '../core/moves';
 import * as C from '../config/gameplay';
+import { OPPONENTS, USER_TEAM } from '../config/teams';
 import { GameScene } from './GameScene';
 
 const DT = 1000 / 60;
@@ -862,5 +863,56 @@ describe('goalie: plays the angle, reads shots, is not slowed by difficulty', ()
     expect(close1).toBeLessThanOrEqual(close0 + 0.05); // harder at higher levels
     expect(far0).toBeLessThan(0.1);
     expect(rate(0, 600, null)).toBeLessThan(0.1);
+  });
+});
+
+// Phaser keeps ONE GameScene instance for the whole session and re-runs init()/create() on every
+// scene.start(). Anything held in a field survives into the next match unless init() resets it.
+describe('match state does not leak from one match into the next', () => {
+  const config = () => ({ userTeam: USER_TEAM, opponent: OPPONENTS[1], level: 0.4 });
+
+  it('init() zeroes the score and flow state left behind by the previous match', () => {
+    const s: any = new GameScene();
+    s.init(config());
+    // ...play a match to a 3-1 win...
+    s.score = [3, 1];
+    s.state = 'over';
+    s.stateTimer = 1.5;
+    s.clock = 187;
+    s.trailTick = 9;
+    s.manualPick = {};
+    s.oneTimerArmed = { player: {}, until: 1 };
+    // ...then Phaser starts the scene again for the next opponent.
+    s.init(config());
+    expect(s.score).toEqual([0, 0]);
+    expect(s.state).toBe('drop');
+    expect(s.stateTimer).toBe(0);
+    expect(s.clock).toBe(0);
+    expect(s.trailTick).toBe(0);
+    expect(s.manualPick).toBeNull();
+    expect(s.oneTimerArmed).toBeNull();
+  });
+
+  it('init() never hands out a shared score array (mutating one match must not touch the next)', () => {
+    const s: any = new GameScene();
+    s.init(config());
+    const first = s.score;
+    first[0] = 3;
+    s.init(config());
+    expect(s.score).not.toBe(first);
+    expect(s.score).toEqual([0, 0]);
+  });
+
+  it('a dev-mode start after a campaign match is not stuck in campaign mode', () => {
+    const s: any = new GameScene();
+    s.init(config());
+    expect(s.campaign).toBe(true);
+    vi.stubGlobal('window', { location: { search: '' } }); // dev-mode init reads URL knobs
+    try {
+      s.init(undefined);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(s.campaign).toBe(false);
   });
 });

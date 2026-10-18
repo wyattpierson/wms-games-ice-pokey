@@ -24,7 +24,7 @@ export class VictoryScene extends Phaser.Scene {
       .text(W / 2, 96, 'CHAMPION!', { fontFamily: FONT, fontSize: '52px', color: hex(THEME.GOLD) })
       .setOrigin(0.5);
     this.add
-      .text(W / 2, 142, 'Aurora Dynasty has fallen — the rink is yours.', {
+      .text(W / 2, 142, 'Sky Raiders has fallen — the rink is yours.', {
         fontFamily: FONT,
         fontSize: '17px',
         color: hex(THEME.DIM),

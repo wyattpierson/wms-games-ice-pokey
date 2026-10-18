@@ -3,7 +3,8 @@
  * "Taken" = the player being pulled from the beaten team; "dropped" = the
  * player leaving the user's roster. Compares the six base stats.
  */
-import type { PlayerDef } from '../config/teams';
+import type { PlayerDef, Team } from '../config/teams';
+import { sidePlayers, type Side } from './campaign';
 import type { BaseStats } from './stats';
 
 /** The six stats in display order. */
@@ -52,4 +53,33 @@ export function overall(player: PlayerDef): number {
 export function averageOverall(group: readonly PlayerDef[]): number {
   if (group.length === 0) return 0;
   return Math.round(group.reduce((sum, p) => sum + overall(p), 0) / group.length);
+}
+
+/** One row of a roster as the poach screen lists it. */
+export interface RosterEntry {
+  player: PlayerDef;
+  side: Side;
+  /** Index among the players of the same side — exactly what applyPoach() expects. */
+  sideIdx: number;
+}
+
+/** A team's players in display order: the field players, then the goalie. */
+export function rosterEntries(team: Team): RosterEntry[] {
+  return (['field', 'goalie'] as const).flatMap((side) =>
+    sidePlayers(team, side).map((player, sideIdx) => ({ player, side, sideIdx })),
+  );
+}
+
+/**
+ * The default "drop" suggestion once a player has been picked to take: the weakest (lowest
+ * overall) player of the same side, first on a tie. Returns an index into `own`, or -1 if
+ * there is nobody on that side.
+ */
+export function suggestDrop(own: readonly RosterEntry[], side: Side): number {
+  let best = -1;
+  own.forEach((e, i) => {
+    if (e.side !== side) return;
+    if (best < 0 || overall(e.player) < overall(own[best].player)) best = i;
+  });
+  return best;
 }

@@ -17,10 +17,12 @@ export const THEME: Record<'GOLD' | 'WHITE' | 'RED' | 'GREEN' | 'BLUE' | 'GRAY' 
   DIM: 0x6b7280,
 };
 
-export const FILL: Record<'background' | 'plate' | 'panel', number> = {
+export const FILL: Record<'background' | 'plate' | 'plateHi' | 'panel' | 'goalie', number> = {
   background: 0x0b0f16, // matches the Phaser config background
   plate: 0x111827,
+  plateHi: 0x1b2638, // a plate under the cursor / mouse
   panel: 0x111a24,
+  goalie: 0x241f0c, // the warm-tinted slot a goalie sits in
 };
 
 export const FONT = 'monospace';

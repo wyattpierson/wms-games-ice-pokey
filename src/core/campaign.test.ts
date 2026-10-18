@@ -17,19 +17,19 @@ import {
   type CampaignState,
 } from './campaign';
 
-const TIDAL = 'tidal-wave';
-const EMBER = 'ember-blitz';
-const TUNDRA = 'tundra-kings';
-const CHAMPION = 'aurora-dynasty';
+const KNUCKLE = 'knuckle-club';
+const GRAVE = 'grave-diggers';
+const SPARKLE = 'sparkle-squad';
+const CHAMPION = 'sky-raiders';
 
-/** A fresh run with the first match (vs Tidal Wave) already started. */
+/** A fresh run with the first match (vs Knuckle Club) already started. */
 function startedRun(): CampaignState {
-  return startMatch(newRun(), TIDAL);
+  return startMatch(newRun(), KNUCKLE);
 }
 
-/** A fresh run where Tidal Wave has just been beaten and awaits a poach. */
+/** A fresh run where Knuckle Club has just been beaten and awaits a poach. */
 function wonRun(): CampaignState {
-  return recordResult(startedRun(), TIDAL, 'win');
+  return recordResult(startedRun(), KNUCKLE, 'win');
 }
 
 describe('newRun', () => {
@@ -54,7 +54,7 @@ describe('newRun', () => {
 
 describe('teamById / isChampion / wins', () => {
   it('finds campaign teams and rejects unknown ids', () => {
-    expect(teamById(TIDAL).id).toBe(TIDAL);
+    expect(teamById(KNUCKLE).id).toBe(KNUCKLE);
     expect(() => teamById('nope')).toThrow();
   });
 
@@ -64,8 +64,8 @@ describe('teamById / isChampion / wins', () => {
   });
 
   it('counts wins only', () => {
-    let s = recordResult(startedRun(), TIDAL, 'win');
-    s = recordResult(s, EMBER, 'loss');
+    let s = recordResult(startedRun(), KNUCKLE, 'win');
+    s = recordResult(s, GRAVE, 'loss');
     expect(wins(s)).toBe(1);
   });
 });
@@ -73,17 +73,17 @@ describe('teamById / isChampion / wins', () => {
 describe('startMatch / abandonMatch', () => {
   it('marks the match in progress, and refuses unavailable teams', () => {
     const s = startedRun();
-    expect(s.matchInProgress).toBe(TIDAL);
+    expect(s.matchInProgress).toBe(KNUCKLE);
     expect(() => startMatch(s, CHAMPION)).not.toThrow();
-    const faced = recordResult(startedRun(), TIDAL, 'win');
-    expect(() => startMatch(faced, TIDAL)).toThrow('not available');
-    const over = recordResult(startedRun(), TIDAL, 'loss');
-    expect(() => startMatch(over, EMBER)).toThrow();
+    const faced = recordResult(startedRun(), KNUCKLE, 'win');
+    expect(() => startMatch(faced, KNUCKLE)).toThrow('not available');
+    const over = recordResult(startedRun(), KNUCKLE, 'loss');
+    expect(() => startMatch(over, GRAVE)).toThrow();
   });
 
   it('abandoning a started match forfeits it (loss, run over)', () => {
     const s = abandonMatch(startedRun());
-    expect(s.results[TIDAL]).toBe('loss');
+    expect(s.results[KNUCKLE]).toBe('loss');
     expect(s.gameOver).toBe(true);
     expect(s.matchInProgress).toBeUndefined();
   });
@@ -97,8 +97,8 @@ describe('startMatch / abandonMatch', () => {
 describe('recordResult', () => {
   it('a regular win sets a pending poach and clears matchInProgress', () => {
     const s = wonRun();
-    expect(s.results[TIDAL]).toBe('win');
-    expect(s.pendingPoach).toBe(TIDAL);
+    expect(s.results[KNUCKLE]).toBe('win');
+    expect(s.pendingPoach).toBe(KNUCKLE);
     expect(s.matchInProgress).toBeUndefined();
     expect(s.gameOver).toBe(false);
     expect(s.victory).toBe(false);
@@ -114,24 +114,24 @@ describe('recordResult', () => {
   });
 
   it('a loss ends the run', () => {
-    const s = recordResult(startedRun(), TIDAL, 'loss');
+    const s = recordResult(startedRun(), KNUCKLE, 'loss');
     expect(s.gameOver).toBe(true);
     expect(s.pendingPoach).toBeUndefined();
   });
 
   it('refuses to face a team twice or continue a finished run', () => {
-    let s = recordResult(startedRun(), TIDAL, 'win');
-    expect(() => recordResult(s, TIDAL, 'loss')).toThrow('already faced');
+    let s = recordResult(startedRun(), KNUCKLE, 'win');
+    expect(() => recordResult(s, KNUCKLE, 'loss')).toThrow('already faced');
     s = skipPoach(s);
-    s = recordResult(s, EMBER, 'loss');
-    expect(() => recordResult(s, TUNDRA, 'win')).toThrow('already over');
+    s = recordResult(s, GRAVE, 'loss');
+    expect(() => recordResult(s, SPARKLE, 'win')).toThrow('already over');
   });
 
   it('is immutable: the input state is not mutated', () => {
     const before = startedRun();
-    recordResult(before, TIDAL, 'win');
+    recordResult(before, KNUCKLE, 'win');
     expect(before.results).toEqual({});
-    expect(before.matchInProgress).toBe(TIDAL);
+    expect(before.matchInProgress).toBe(KNUCKLE);
   });
 });
 
@@ -139,80 +139,80 @@ describe('skipPoach', () => {
   it('consumes the pending poach and keeps everything else', () => {
     const s = skipPoach(wonRun());
     expect(s.pendingPoach).toBeUndefined();
-    expect(s.results[TIDAL]).toBe('win');
+    expect(s.results[KNUCKLE]).toBe('win');
     expect(s.gameOver).toBe(false);
   });
 });
 
 describe('applyPoach', () => {
   it('swaps a field player into the dropped player\'s slot (order preserved)', () => {
-    // Drop Charizard (field idx 1), take Lapras (tidal field idx 1).
-    const s = applyPoach(wonRun(), 'field', TIDAL, 1, 1);
+    // Drop Pikachu (field idx 1), take Hitmonchan (knuckle field idx 1).
+    const s = applyPoach(wonRun(), 'field', KNUCKLE, 1, 1);
     const names = s.userTeam.players.map((p) => p.name);
-    expect(names).toEqual(['Pikachu', 'Lapras', 'Machamp', 'Snorlax']);
+    expect(names).toEqual(['Psyduck', 'Hitmonchan', 'Pachirisu', 'Clefairy']);
     expect(s.pendingPoach).toBeUndefined();
-    expect(s.poaches).toEqual([{ fromTeamId: TIDAL, side: 'field', taken: 'Lapras', dropped: 'Charizard' }]);
+    expect(s.poaches).toEqual([{ fromTeamId: KNUCKLE, side: 'field', taken: 'Hitmonchan', dropped: 'Pikachu' }]);
   });
 
   it('preserves slot order when the dropped and taken indices differ', () => {
-    // Drop Machamp (field idx 2), take Gyarados (tidal field idx 2).
-    const s = applyPoach(wonRun(), 'field', TIDAL, 2, 2);
-    expect(s.userTeam.players.map((p) => p.name)).toEqual(['Pikachu', 'Charizard', 'Gyarados', 'Snorlax']);
+    // Drop Pachirisu (field idx 2), take Grapploct (knuckle field idx 2).
+    const s = applyPoach(wonRun(), 'field', KNUCKLE, 2, 2);
+    expect(s.userTeam.players.map((p) => p.name)).toEqual(['Psyduck', 'Pikachu', 'Grapploct', 'Clefairy']);
   });
 
   it('swaps the goalie for the goalie', () => {
-    const s = applyPoach(wonRun(), 'goalie', TIDAL, 0, 0);
-    expect(s.userTeam.players.map((p) => p.name)).toEqual(['Pikachu', 'Charizard', 'Machamp', 'Wigglytuff']);
+    const s = applyPoach(wonRun(), 'goalie', KNUCKLE, 0, 0);
+    expect(s.userTeam.players.map((p) => p.name)).toEqual(['Psyduck', 'Pikachu', 'Pachirisu', 'Hariyama']);
     const goalie = sidePlayers(s.userTeam, 'goalie');
     expect(goalie).toHaveLength(1);
-    expect(goalie[0].name).toBe('Wigglytuff');
+    expect(goalie[0].name).toBe('Hariyama');
   });
 
   it('the taken player is a clone (no shared stat references)', () => {
-    const s = applyPoach(wonRun(), 'field', TIDAL, 1, 1);
+    const s = applyPoach(wonRun(), 'field', KNUCKLE, 1, 1);
     const taken: PlayerDef = s.userTeam.players[1];
-    const original = teamById(TIDAL).players[1];
+    const original = teamById(KNUCKLE).players[1];
     taken.stats.speed = 1;
     expect(original.stats.speed).not.toBe(1);
   });
 
   it('keeps the poach history across multiple poaches', () => {
-    let s = applyPoach(wonRun(), 'field', TIDAL, 1, 1);
-    s = startMatch(s, EMBER);
-    s = recordResult(s, EMBER, 'win');
-    s = applyPoach(s, 'goalie', EMBER, 0, 0);
+    let s = applyPoach(wonRun(), 'field', KNUCKLE, 1, 1);
+    s = startMatch(s, GRAVE);
+    s = recordResult(s, GRAVE, 'win');
+    s = applyPoach(s, 'goalie', GRAVE, 0, 0);
     expect(s.poaches).toHaveLength(2);
-    expect(s.poaches[1]).toEqual({ fromTeamId: EMBER, side: 'goalie', taken: 'Clefable', dropped: 'Snorlax' });
+    expect(s.poaches[1]).toEqual({ fromTeamId: GRAVE, side: 'goalie', taken: 'Golurk', dropped: 'Clefairy' });
   });
 
   it('is immutable: the input roster is untouched', () => {
     const before = wonRun();
     const beforeNames = before.userTeam.players.map((p) => p.name);
-    applyPoach(before, 'field', TIDAL, 1, 1);
+    applyPoach(before, 'field', KNUCKLE, 1, 1);
     expect(before.userTeam.players.map((p) => p.name)).toEqual(beforeNames);
   });
 
   it('refuses: not a beaten team, the champion, and bad indices', () => {
     const s = wonRun();
-    expect(() => applyPoach(s, 'field', EMBER, 0, 0)).toThrow('just beat');
+    expect(() => applyPoach(s, 'field', GRAVE, 0, 0)).toThrow('just beat');
     // Champion win: no pending poach, and poaching it throws.
     let c = skipPoach(s);
     c = recordResult(c, CHAMPION, 'win');
     expect(() => applyPoach(c, 'field', CHAMPION, 0, 0)).toThrow('no players');
-    expect(() => applyPoach(s, 'field', TIDAL, 9, 0)).toThrow('Bad roster index');
-    expect(() => applyPoach(s, 'goalie', TIDAL, 1, 0)).toThrow('Bad roster index');
+    expect(() => applyPoach(s, 'field', KNUCKLE, 9, 0)).toThrow('Bad roster index');
+    expect(() => applyPoach(s, 'goalie', KNUCKLE, 1, 0)).toThrow('Bad roster index');
   });
 });
 
 describe('difficultyLevel', () => {
   it('ramps 0.15 + 0.25 per win for regulars', () => {
-    expect(difficultyLevel(newRun(), TIDAL)).toBeCloseTo(0.15);
+    expect(difficultyLevel(newRun(), KNUCKLE)).toBeCloseTo(0.15);
     let s = wonRun(); // 1 win
     s = skipPoach(s);
-    expect(difficultyLevel(s, EMBER)).toBeCloseTo(0.4);
-    s = recordResult(s, EMBER, 'win'); // 2 wins
+    expect(difficultyLevel(s, GRAVE)).toBeCloseTo(0.4);
+    s = recordResult(s, GRAVE, 'win'); // 2 wins
     s = skipPoach(s);
-    expect(difficultyLevel(s, TUNDRA)).toBeCloseTo(0.65);
+    expect(difficultyLevel(s, SPARKLE)).toBeCloseTo(0.65);
   });
 
   it('the champion is always 0.9', () => {
@@ -224,23 +224,23 @@ describe('difficultyLevel', () => {
   it('losses do not lower the ramp', () => {
     let s = wonRun(); // 1 win
     s = skipPoach(s);
-    s = recordResult(s, EMBER, 'loss'); // 1 win, 1 loss
+    s = recordResult(s, GRAVE, 'loss'); // 1 win, 1 loss
     // unreachable in practice (loss ends the run), but the formula is wins-only:
-    expect(difficultyLevel(s, TUNDRA)).toBeCloseTo(0.4);
+    expect(difficultyLevel(s, SPARKLE)).toBeCloseTo(0.4);
   });
 });
 
 describe('availableOpponents / isResumable', () => {
   it('all four teams are available at the start', () => {
-    expect(availableOpponents(newRun()).map((t) => t.id)).toEqual([TIDAL, EMBER, TUNDRA, CHAMPION]);
+    expect(availableOpponents(newRun()).map((t) => t.id)).toEqual([KNUCKLE, GRAVE, SPARKLE, CHAMPION]);
     expect(isResumable(newRun())).toBe(true);
   });
 
   it('shrinks as teams are faced; empty when the run is over', () => {
     let s = wonRun();
     s = skipPoach(s);
-    expect(availableOpponents(s).map((t) => t.id)).toEqual([EMBER, TUNDRA, CHAMPION]);
-    s = recordResult(s, EMBER, 'loss');
+    expect(availableOpponents(s).map((t) => t.id)).toEqual([GRAVE, SPARKLE, CHAMPION]);
+    s = recordResult(s, GRAVE, 'loss');
     expect(availableOpponents(s)).toEqual([]);
     expect(isResumable(s)).toBe(false);
   });

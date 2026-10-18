@@ -33,7 +33,7 @@ export function runSummaryPanel(scene: Phaser.Scene, cx: number, cy: number, sta
 
   const rx = cx + W / 2 - 48 - 232;
   scene.add.text(rx, cy - 124, 'FINAL ROSTER', { fontFamily: FONT, fontSize: '13px', color: hex(THEME.DIM) });
-  rosterStrip(scene, rx, cy + 8, state.userTeam.players, 46);
+  rosterStrip(scene, rx + 110, cy + 8, state.userTeam.players, 50);
   scene.add
     .text(rx, cy + 64, `TEAM OVR  ${averageOverall(state.userTeam.players)}`, {
       fontFamily: FONT,

@@ -13,6 +13,8 @@ export class ConfirmDialog {
   private confirmLabel: Phaser.GameObjects.Text;
   private cancelLabel: Phaser.GameObjects.Text;
   private bindings: [string, () => void][] = [];
+  /** Everything this dialog put on the scene, so destroy() can take ALL of it down again. */
+  private parts: Phaser.GameObjects.GameObject[] = [];
 
   constructor(
     private scene: Phaser.Scene,
@@ -28,19 +30,20 @@ export class ConfirmDialog {
     overlay.setInteractive();
     const pw = 520;
     const ph = 300;
-    scene.add.rectangle(W / 2, H / 2, pw, ph, FILL.panel, 1).setStrokeStyle(3, THEME.GOLD);
-    scene.add.text(W / 2, H / 2 - ph / 2 + 52, title, {
+    const panel = scene.add.rectangle(W / 2, H / 2, pw, ph, FILL.panel, 1).setStrokeStyle(3, THEME.GOLD);
+    const titleText = scene.add.text(W / 2, H / 2 - ph / 2 + 52, title, {
       fontFamily: FONT,
       fontSize: '24px',
       color: hex(THEME.RED),
     }).setOrigin(0.5);
-    scene.add.text(W / 2, H / 2 - 16, body, {
+    const bodyText = scene.add.text(W / 2, H / 2 - 16, body, {
       fontFamily: FONT,
       fontSize: '15px',
       color: hex(THEME.WHITE),
       align: 'center',
       wordWrap: { width: pw - 80 },
     }).setOrigin(0.5);
+    this.parts.push(overlay, panel, titleText, bodyText);
 
     this.confirmLabel = scene.add.text(W / 2 - 130, H / 2 + ph / 2 - 58, confirmLabel, {
       fontFamily: FONT,
@@ -99,5 +102,7 @@ export class ConfirmDialog {
     this.bindings = [];
     this.confirmLabel.destroy();
     this.cancelLabel.destroy();
+    for (const part of this.parts) part.destroy();
+    this.parts = [];
   }
 }

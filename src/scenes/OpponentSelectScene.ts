@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH } from '../config/rink';
-import { CAMPAIGN_TEAMS, type Team } from '../config/teams';
+import { CAMPAIGN_TEAMS, OPPONENTS, type Team } from '../config/teams';
 import { difficultyLevel, isChampion, startMatch, wins } from '../core/campaign';
 import { averageOverall } from '../core/poach';
 import { getRun, setRun } from '../state/runStore';
@@ -8,130 +8,236 @@ import { TextButton, hex, rosterStrip } from '../ui/menu';
 import { FILL, FONT, THEME } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
 
+// ---- layout (the stage is 1192 × 672) ----
 const CARD_W = 270;
-const CARD_H = 300;
+const CARD_H = 350;
 const CARD_GAP = 16;
-const CARD_TOP = 108;
-const CARD_LEFT = (GAME_WIDTH - (CAMPAIGN_TEAMS.length * CARD_W + (CAMPAIGN_TEAMS.length - 1) * CARD_GAP)) / 2;
+const CARD_TOP = 98;
+const CARDS_W = CAMPAIGN_TEAMS.length * CARD_W + (CAMPAIGN_TEAMS.length - 1) * CARD_GAP;
+const CARD_LEFT = (GAME_WIDTH - CARDS_W) / 2;
+const FOOTER_Y = CARD_TOP + CARD_H + 22; // top edge of the "your team" plate
+const FOOTER_H = 672 - FOOTER_Y - 44;
+const PIPS = 5;
+
+const T = (size: number, color: number, extra: Phaser.Types.GameObjects.Text.TextStyle = {}): Phaser.Types.GameObjects.Text.TextStyle => ({
+  fontFamily: FONT,
+  fontSize: `${size}px`,
+  color: hex(color),
+  ...extra,
+});
+
+interface OpponentCard {
+  team: Team;
+  cx: number;
+  cy: number;
+  available: boolean;
+}
 
 export class OpponentSelectScene extends Phaser.Scene {
+  private cards: OpponentCard[] = [];
+  private focus = -1; // index into CAMPAIGN_TEAMS of the highlighted card (-1: nothing left to fight)
+  private ring!: Phaser.GameObjects.Rectangle;
+  private panels: Phaser.GameObjects.Rectangle[] = [];
   private onKey: ((e: KeyboardEvent) => void) | null = null;
 
   constructor() {
     super('OpponentSelectScene');
   }
 
+  init(): void {
+    this.cards = [];
+    this.panels = [];
+    this.focus = -1;
+  }
+
   create(): void {
     wireShutdown(this);
     const W = GAME_WIDTH;
     const state = getRun();
+
+    // A poach that was earned but never resolved (e.g. the page was refreshed on the poach
+    // screen) is resumed rather than silently lost.
+    if (state.pendingPoach) {
+      this.scene.start('PoachScene', { teamId: state.pendingPoach });
+      return;
+    }
+
     this.cameras.main.setBackgroundColor(FILL.background);
-
+    this.add.text(W / 2, 38, 'CHOOSE YOUR OPPONENT', T(30, THEME.WHITE)).setOrigin(0.5);
+    const regulars = OPPONENTS.length;
+    const beaten = OPPONENTS.filter((t) => state.results[t.id] === 'win').length;
     this.add
-      .text(W / 2, 44, 'CHOOSE YOUR OPPONENT', { fontFamily: FONT, fontSize: '30px', color: hex(THEME.WHITE) })
-      .setOrigin(0.5);
-    this.add
-      .text(W / 2, 82, `${wins(state)} win(s) this run · pick your order — the champion is always on the table`, {
-        fontFamily: FONT,
-        fontSize: '14px',
-        color: hex(THEME.DIM),
-      })
+      .text(W / 2, 72, `${beaten} / ${regulars} teams beaten  ·  fight them in any order  ·  the champion is always on the table`, T(13, THEME.DIM))
       .setOrigin(0.5);
 
-    CAMPAIGN_TEAMS.forEach((team, i) => {
-      const cx = CARD_LEFT + i * (CARD_W + CARD_GAP) + CARD_W / 2;
-      const cy = CARD_TOP + CARD_H / 2;
-      const available = !state.results[team.id];
-      const champion = isChampion(team.id);
-      const stroke = champion ? THEME.GOLD : team.color;
+    const ownOvr = averageOverall(state.userTeam.players);
+    CAMPAIGN_TEAMS.forEach((team, i) => this.buildCard(i, team, ownOvr));
 
-      const panel = this.add.rectangle(cx, cy, CARD_W, CARD_H, FILL.plate, 1).setStrokeStyle(3, stroke);
-      if (available) panel.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.launch(team.id));
+    // One ring follows the keyboard/mouse focus from card to card.
+    this.ring = this.add.rectangle(0, 0, CARD_W + 12, CARD_H + 12).setStrokeStyle(3, THEME.GOLD).setVisible(false);
+    this.focus = this.cards.findIndex((c) => c.available);
+    this.paintFocus();
 
-      let status = 'READY';
-      let statusColor: number = THEME.GREEN;
-      if (state.results[team.id] === 'loss') {
-        status = 'DEFEATED YOU';
-        statusColor = THEME.RED;
-      } else if (state.results[team.id] === 'win') {
-        status = 'DEFEATED';
-        statusColor = THEME.GRAY;
-      } else if (champion) {
-        status = 'NEARLY IMPOSSIBLE';
-        statusColor = THEME.RED;
-      }
-      this.add.text(cx, CARD_TOP + 24, status, { fontFamily: FONT, fontSize: '13px', color: hex(statusColor) }).setOrigin(0.5);
-      this.add
-        .text(cx, CARD_TOP + 56, (champion ? '★ ' : '') + team.name, {
-          fontFamily: FONT,
-          fontSize: '18px',
-          color: hex(champion ? THEME.GOLD : THEME.WHITE),
-        })
-        .setOrigin(0.5);
-
-      this.add.text(cx, CARD_TOP + 96, 'SCOUTING REPORT', { fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM) }).setOrigin(0.5);
-      rosterStrip(this, cx - 104, CARD_TOP + 136, team.players, 40);
-      this.add
-        .text(cx, CARD_TOP + 186, `TEAM OVR  ${averageOverall(team.players)}`, {
-          fontFamily: FONT,
-          fontSize: '16px',
-          color: hex(THEME.GOLD),
-        })
-        .setOrigin(0.5);
-
-      if (available) {
-        this.add
-          .text(cx, CARD_TOP + 216, `AI LEVEL  ${difficultyLevel(state, team.id).toFixed(2)}`, {
-            fontFamily: FONT,
-            fontSize: '14px',
-            color: hex(THEME.BLUE),
-          })
-          .setOrigin(0.5);
-        new TextButton(this, cx, CARD_TOP + CARD_H - 28, `press ${i + 1} · click`, { onSelect: () => this.launch(team.id) });
-      } else {
-        const poach = state.poaches.find((p) => p.fromTeamId === team.id);
-        this.add
-          .text(cx, CARD_TOP + 216, state.results[team.id] === 'win' ? (poach ? `poached ${poach.taken}` : 'no poach') : 'the run is over', {
-            fontFamily: FONT,
-            fontSize: '13px',
-            color: hex(THEME.DIM),
-          })
-          .setOrigin(0.5);
-      }
-    });
-
-    // Footer: the player's current roster.
-    const ft = state.userTeam;
-    this.add.text(32, 452, 'YOUR TEAM', { fontFamily: FONT, fontSize: '13px', color: hex(THEME.DIM) });
-    this.add
-      .text(32, 480, `${ft.name}  ·  ${wins(state)} win(s)  ·  ${state.poaches.length} poached`, {
-        fontFamily: FONT,
-        fontSize: '16px',
-        color: hex(THEME.WHITE),
-      });
-    rosterStrip(this, 32, 532, ft.players, 48);
-    this.add
-      .text(32, 578, `TEAM OVR  ${averageOverall(ft.players)}`, { fontFamily: FONT, fontSize: '15px', color: hex(THEME.GOLD) });
-    new TextButton(this, GAME_WIDTH - 130, 480, 'SAVE & QUIT  (ESC)', { color: THEME.GRAY, onSelect: () => this.scene.start('TitleScene') });
+    this.buildFooter(ownOvr);
 
     const onKey = (e: KeyboardEvent) => {
-      const digits = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4'];
-      const i = digits.indexOf(e.code);
-      if (i >= 0 && CAMPAIGN_TEAMS[i]) {
-        const team = CAMPAIGN_TEAMS[i];
-        if (!getRun().results[team.id]) this.launch(team.id);
+      const digit = /^(Digit|Numpad)([1-9])$/.exec(e.code);
+      if (digit) {
+        const i = Number(digit[2]) - 1;
+        if (this.cards[i]?.available) this.launch(this.cards[i].team.id);
         return;
       }
-      if (e.code === 'Escape') this.scene.start('TitleScene');
+      switch (e.code) {
+        case 'ArrowLeft':
+        case 'KeyA':
+          this.stepFocus(-1);
+          break;
+        case 'ArrowRight':
+        case 'KeyD':
+          this.stepFocus(1);
+          break;
+        case 'Enter':
+        case 'Space':
+          if (this.focus >= 0 && this.cards[this.focus].available) this.launch(this.cards[this.focus].team.id);
+          break;
+        case 'Escape':
+          this.scene.start('TitleScene');
+          break;
+      }
     };
     this.onKey = onKey;
     window.addEventListener('keydown', onKey);
   }
 
+  // ---------- one opponent card ----------
+
+  private buildCard(i: number, team: Team, ownOvr: number): void {
+    const state = getRun();
+    const cx = CARD_LEFT + i * (CARD_W + CARD_GAP) + CARD_W / 2;
+    const cy = CARD_TOP + CARD_H / 2;
+    const champion = isChampion(team.id);
+    const result = state.results[team.id];
+    const available = !result;
+    this.cards.push({ team, cx, cy, available });
+
+    const card = this.add.container(cx, cy);
+    const put = <G extends Phaser.GameObjects.GameObject>(o: G): G => {
+      card.add(o);
+      return o;
+    };
+    const stroke = champion ? THEME.GOLD : team.color;
+
+    const panel = put(this.add.rectangle(0, 0, CARD_W, CARD_H, FILL.plate, 1).setStrokeStyle(3, stroke));
+    this.panels[i] = panel;
+    // A strip in the team's color carries the status label.
+    put(this.add.rectangle(0, -CARD_H / 2 + 22, CARD_W - 6, 40, team.color, 0.18));
+
+    let status = 'READY';
+    let statusColor: number = THEME.GREEN;
+    if (result === 'loss') {
+      status = 'DEFEATED YOU';
+      statusColor = THEME.RED;
+    } else if (result === 'win') {
+      status = '✓ DEFEATED';
+      statusColor = THEME.GRAY;
+    } else if (champion) {
+      status = 'NEARLY IMPOSSIBLE';
+      statusColor = THEME.RED;
+    }
+    put(this.add.text(0, -CARD_H / 2 + 22, status, T(13, statusColor, { fontStyle: 'bold' })).setOrigin(0.5));
+    put(this.add.text(0, -CARD_H / 2 + 68, (champion ? '★ ' : '') + team.name, T(20, champion ? THEME.GOLD : THEME.WHITE, { fontStyle: 'bold' })).setOrigin(0.5));
+
+    put(this.add.text(0, -CARD_H / 2 + 104, 'ROSTER  ·  OVR', T(11, THEME.DIM)).setOrigin(0.5));
+    put(rosterStrip(this, 0, -CARD_H / 2 + 146, team.players, 52));
+
+    const ovr = averageOverall(team.players);
+    put(this.add.text(0, -CARD_H / 2 + 208, `TEAM OVR  ${ovr}`, T(17, THEME.GOLD)).setOrigin(0.5));
+
+    if (available) {
+      // How they stack up against you: higher than yours is a warning, lower is good news.
+      const gap = ovr - ownOvr;
+      const vs = gap === 0 ? 'even with your team' : `${gap > 0 ? '+' : '−'}${Math.abs(gap)} vs your team`;
+      put(this.add.text(0, -CARD_H / 2 + 232, vs, T(12, gap > 0 ? THEME.RED : gap < 0 ? THEME.GREEN : THEME.GRAY)).setOrigin(0.5));
+
+      const level = difficultyLevel(state, team.id);
+      const lit = Math.max(1, Math.min(PIPS, Math.round(level * PIPS)));
+      const pipW = 16;
+      const pipGap = 4;
+      const barW = PIPS * pipW + (PIPS - 1) * pipGap;
+      const rowY = -CARD_H / 2 + 262;
+      put(this.add.text(-barW / 2 - 8, rowY, 'THREAT', T(11, THEME.DIM)).setOrigin(1, 0.5));
+      for (let p = 0; p < PIPS; p++) {
+        const on = p < lit;
+        put(this.add.rectangle(-barW / 2 + pipW / 2 + p * (pipW + pipGap) + 4, rowY, pipW, 8, on ? THEME.BLUE : FILL.background, 1).setStrokeStyle(1, on ? THEME.BLUE : THEME.DIM));
+      }
+
+      card.add(new TextButton(this, 0, CARD_H / 2 - 28, `FIGHT  [${i + 1}]`, { color: champion ? THEME.GOLD : THEME.GREEN, minWidth: 150 }));
+    } else {
+      const poach = state.poaches.find((p) => p.fromTeamId === team.id);
+      const line =
+        result === 'win' ? (poach ? `took ${poach.taken}` : 'nobody taken') : 'your run ended here';
+      const color = result === 'win' ? (poach ? THEME.GREEN : THEME.DIM) : THEME.DIM;
+      put(this.add.text(0, -CARD_H / 2 + 248, line, T(13, color)).setOrigin(0.5));
+      card.setAlpha(0.55);
+    }
+
+    if (available) {
+      panel.setInteractive({ useHandCursor: true });
+      panel.on('pointerover', () => {
+        this.focus = i;
+        this.paintFocus();
+      });
+      panel.on('pointerdown', () => this.launch(team.id));
+    }
+  }
+
+  // ---------- footer: your team ----------
+
+  private buildFooter(ownOvr: number): void {
+    const state = getRun();
+    const x0 = (GAME_WIDTH - CARDS_W) / 2;
+    const cy = FOOTER_Y + FOOTER_H / 2;
+    this.add.rectangle(GAME_WIDTH / 2, cy, CARDS_W, FOOTER_H, FILL.plate, 1).setStrokeStyle(2, THEME.DIM);
+
+    const lx = x0 + 28;
+    this.add.text(lx, cy - 40, 'YOUR TEAM', T(11, THEME.DIM)).setOrigin(0, 0.5);
+    this.add.text(lx, cy - 14, state.userTeam.name, T(22, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(0, 0.5);
+    this.add.text(lx, cy + 16, `${wins(state)} win${wins(state) === 1 ? '' : 's'}  ·  ${state.poaches.length} poached`, T(13, THEME.GRAY)).setOrigin(0, 0.5);
+
+    rosterStrip(this, x0 + 470, cy - 4, state.userTeam.players, 60);
+
+    this.add.text(x0 + 770, cy - 30, 'TEAM OVR', T(11, THEME.DIM)).setOrigin(0.5);
+    this.add.text(x0 + 770, cy + 4, String(ownOvr), T(40, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0.5);
+
+    new TextButton(this, x0 + CARDS_W - 28 - 88, cy, 'SAVE & QUIT  (ESC)', { color: THEME.GRAY, minWidth: 176, onSelect: () => this.scene.start('TitleScene') });
+  }
+
+  // ---------- focus ----------
+
+  private stepFocus(dir: number): void {
+    const open = this.cards.map((c, i) => (c.available ? i : -1)).filter((i) => i >= 0);
+    if (open.length === 0) return;
+    const at = open.indexOf(this.focus);
+    this.focus = open[(at + dir + open.length) % open.length];
+    this.paintFocus();
+  }
+
+  private paintFocus(): void {
+    this.cards.forEach((c, i) => {
+      if (c.available) this.panels[i].setFillStyle(i === this.focus ? FILL.plateHi : FILL.plate, 1);
+    });
+    if (this.focus < 0) {
+      this.ring.setVisible(false);
+      return;
+    }
+    const c = this.cards[this.focus];
+    this.ring.setPosition(c.cx, c.cy).setVisible(true);
+  }
+
   private launch(teamId: string): void {
     const state = startMatch(getRun(), teamId);
     setRun(state);
-    const team: Team = CAMPAIGN_TEAMS.find((t) => t.id === teamId)!;
+    const team = CAMPAIGN_TEAMS.find((t) => t.id === teamId)!;
     this.scene.start('GameScene', { userTeam: state.userTeam, opponent: team, level: difficultyLevel(state, teamId) });
   }
 

@@ -61,7 +61,7 @@ describe('deriveStats', () => {
       return Math.max(...a) / Math.min(...a);
     };
     expect(ratio((x) => x.moveSpeed)).toBeGreaterThan(1.4);
-    // (placeholder roster data has a narrow Sp.Atk band 55–100; the mapping itself spans ≥1.5×, see above)
+    // (the shipped field rosters' Sp.Atk band is 35–130; the mapping itself spans ≥1.5×, see above)
     expect(ratio((x) => x.skill)).toBeGreaterThan(1.3);
     expect(ratio((x) => x.shotPower)).toBeGreaterThan(1.5);
     expect(ratio((x) => x.parryFrac)).toBeGreaterThan(1.3);

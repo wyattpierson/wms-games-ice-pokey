@@ -68,7 +68,7 @@ console.log('match:', JSON.stringify(match));
 check('match is live', match.state === 'live');
 check('match is a campaign match', match.campaign === true);
 check('8 players on the ice', match.players === 8);
-check('opponent is Tidal Wave', match.opponent === 'Tidal Wave');
+check('opponent is Knuckle Club', match.opponent === 'Knuckle Club');
 check('all sprites loaded', match.sprites >= 16);
 
 // 4. Play a couple of seconds with real inputs.
