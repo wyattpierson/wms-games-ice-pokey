@@ -1,7 +1,13 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from './config/rink';
-import { OPPONENTS, USER_TEAM } from './config/teams';
-import { GameScene, readOpponentParam } from './scenes/GameScene';
+import { CAMPAIGN_TEAMS, USER_TEAM } from './config/teams';
+import { GameScene } from './scenes/GameScene';
+import { GameOverScene } from './scenes/GameOverScene';
+import { OpponentSelectScene } from './scenes/OpponentSelectScene';
+import { PoachScene } from './scenes/PoachScene';
+import { ResultScene } from './scenes/ResultScene';
+import { TitleScene } from './scenes/TitleScene';
+import { VictoryScene } from './scenes/VictoryScene';
 
 // Dev deep-link: ?renderer=canvas forces the canvas renderer (for pixel tests).
 const params = new URLSearchParams(window.location.search);
@@ -23,8 +29,10 @@ class Preloader extends Phaser.Scene {
   // before create(). Queuing in create() sits in the queue forever and the
   // game never starts (this was the blank-screen bug).
   preload(): void {
+    // Every roster the campaign can ever show: the starting team plus all
+    // campaign teams (poached players always have a sprite loaded).
     const seen = new Set<number>();
-    for (const t of [USER_TEAM, ...OPPONENTS]) {
+    for (const t of [USER_TEAM, ...CAMPAIGN_TEAMS]) {
       for (const p of t.players) seen.add(p.sprite);
     }
     for (const id of seen) {
@@ -48,7 +56,7 @@ class Preloader extends Phaser.Scene {
   private launch(): void {
     if (this.launched) return;
     this.launched = true;
-    this.scene.start('GameScene', { opponentIndex: readOpponentParam() });
+    this.scene.start('TitleScene');
   }
 }
 
@@ -61,7 +69,16 @@ const game = new Phaser.Game({
   backgroundColor: '#0b0f16',
   pixelArt: true,
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-  scene: [Preloader, GameScene],
+  scene: [
+    Preloader,
+    TitleScene,
+    OpponentSelectScene,
+    GameScene,
+    ResultScene,
+    PoachScene,
+    VictoryScene,
+    GameOverScene,
+  ],
 });
 
 // Dev debug hook (used by /tmp/debug.mjs; harmless in prod).

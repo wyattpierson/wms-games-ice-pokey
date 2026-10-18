@@ -17,6 +17,8 @@ export interface PlayerDef {
 }
 
 export interface Team {
+  /** Stable id — used by the campaign state machine and save files. */
+  id: string;
   name: string;
   color: number; // body color
   colorDark: number; // outline / goalie tint
@@ -29,6 +31,7 @@ const s = (
 ): BaseStats => ({ hp, attack, specialAttack, defense, specialDefense, speed });
 
 export const USER_TEAM: Team = {
+  id: 'frost-pack',
   name: 'Frost Pack',
   color: 0x3b82f6,
   colorDark: 0x1d4ed8,
@@ -42,6 +45,7 @@ export const USER_TEAM: Team = {
 
 export const OPPONENTS: Team[] = [
   {
+    id: 'tidal-wave',
     name: 'Tidal Wave',
     color: 0x14b8a6,
     colorDark: 0x0f766e,
@@ -53,6 +57,7 @@ export const OPPONENTS: Team[] = [
     ],
   },
   {
+    id: 'ember-blitz',
     name: 'Ember Blitz',
     color: 0xef4444,
     colorDark: 0xb91c1c,
@@ -64,6 +69,7 @@ export const OPPONENTS: Team[] = [
     ],
   },
   {
+    id: 'tundra-kings',
     name: 'Tundra Kings',
     color: 0x8b5cf6,
     colorDark: 0x6d28d9,
@@ -75,3 +81,24 @@ export const OPPONENTS: Team[] = [
     ],
   },
 ];
+
+/**
+ * The champion: the gauntlet's finale. Always available (you can rush it), and
+ * clearly the best team in the league — elite stats on top of the highest AI
+ * level. Beating it ends the run (victory); it grants no poach.
+ */
+export const CHAMPION_TEAM: Team = {
+  id: 'aurora-dynasty',
+  name: 'Aurora Dynasty',
+  color: 0xf59e0b,
+  colorDark: 0xb45309,
+  players: [
+    { name: 'Mewtwo', sprite: 150, stats: s(106, 110, 154, 90, 120, 130) },
+    { name: 'Garchomp', sprite: 445, stats: s(108, 130, 80, 95, 85, 102) },
+    { name: 'Metagross', sprite: 456, stats: s(80, 135, 95, 130, 90, 70) },
+    { name: 'Registeel', sprite: 379, goalie: true, stats: s(80, 75, 15, 150, 120, 50) },
+  ],
+};
+
+/** Every team you can face this run: the 3 regulars + the champion. */
+export const CAMPAIGN_TEAMS: Team[] = [...OPPONENTS, CHAMPION_TEAM];

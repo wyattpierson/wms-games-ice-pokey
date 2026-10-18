@@ -12,6 +12,7 @@ import {
 import { DEFAULT_LEVEL, difficultyAt, type Difficulty } from '../config/difficulty';
 import { CENTER_X, CENTER_Y, GAME_HEIGHT, ICE_X, RINK_W } from '../config/rink';
 import { OPPONENTS, USER_TEAM, type Team } from '../config/teams';
+import { abandonMatch } from '../core/campaign';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
 import {
@@ -23,11 +24,22 @@ import { Controls } from '../gameplay/controls';
 import { Player } from '../gameplay/entities/Player';
 import { Puck } from '../gameplay/entities/Puck';
 import { drawRink } from '../gameplay/entities/Rink';
+import { getRun, setRun } from '../state/runStore';
+import { PauseOverlay } from '../ui/PauseOverlay';
+import { wireShutdown } from '../ui/sceneLifecycle';
 
 type MatchState = 'drop' | 'live' | 'goal' | 'over';
 
+/** Legacy dev data (pre-campaign): pick an opponent by index. */
 interface GameData {
-  opponentIndex: number;
+  opponentIndex?: number;
+}
+
+/** Campaign data: an explicit roster, opponent and run-driven AI level. */
+export interface MatchConfig {
+  userTeam: Team;
+  opponent: Team;
+  level: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -50,20 +62,36 @@ export class GameScene extends Phaser.Scene {
   private diff: Difficulty = difficultyAt(DEFAULT_LEVEL);
   private opponentIdx = 0;
   private oppTeam: Team = OPPONENTS[0];
+  private userTeam: Team = USER_TEAM;
+  private campaign = false;
+  private pauseOverlay: PauseOverlay | null = null;
   private scoreText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
+  private hintText!: Phaser.GameObjects.Text;
 
-  init(data: GameData): void {
-    this.opponentIdx = data?.opponentIndex ?? readOpponentParam();
-    this.diff = difficultyAt(readLevelParam());
+  init(data?: MatchConfig | GameData): void {
+    if (data && 'userTeam' in data) {
+      // Campaign match: explicit roster, opponent and AI level.
+      const c = data as MatchConfig;
+      this.userTeam = c.userTeam;
+      this.oppTeam = c.opponent;
+      this.diff = difficultyAt(c.level);
+      this.campaign = true;
+    } else {
+      // Dev mode (and the sim test, which skips init entirely): index + URL knobs.
+      const g = data as GameData | undefined;
+      this.opponentIdx = g?.opponentIndex ?? readOpponentParam();
+      this.diff = difficultyAt(readLevelParam());
+    }
   }
 
   create(): void {
+    wireShutdown(this);
     drawRink(this);
 
-    this.oppTeam = OPPONENTS[this.opponentIdx] ?? OPPONENTS[0];
+    if (!this.campaign) this.oppTeam = OPPONENTS[this.opponentIdx] ?? OPPONENTS[0];
     this.players = [];
-    USER_TEAM.players.forEach((pd, i) => this.players.push(this.makePlayer(USER_TEAM, 0, i, pd)));
+    this.userTeam.players.forEach((pd, i) => this.players.push(this.makePlayer(this.userTeam, 0, i, pd)));
     this.oppTeam.players.forEach((pd, i) => this.players.push(this.makePlayer(this.oppTeam, 1, i, pd)));
 
     this.puck = new Puck(this, CENTER_X, CENTER_Y);
@@ -81,11 +109,16 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setAlpha(0);
+    this.hintText = this.add
+      .text(CENTER_X, CENTER_Y + 64, '', { fontFamily: 'monospace', fontSize: '16px', color: '#8b98ab' })
+      .setOrigin(0.5)
+      .setAlpha(0);
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
         'Arrows / WASD move · SPACE pass / switch · hold SHIFT = shoot (↑/↓ aims, release when the goalie ring turns white)\n' +
           'E Spin · F Deke   (defending: press the SAME key when the ring turns white, from IN FRONT of them)\n' +
-          'SHIFT while defending = CHECK (hit + block, no steal) · pass, then press SHIFT as it arrives = ONE-TIMER · R restart',
+          'SHIFT while defending = CHECK (hit + block, no steal) · pass, then press SHIFT as it arrives = ONE-TIMER · ' +
+          (this.campaign ? 'ESC pause' : 'R restart'),
         {
           fontFamily: 'monospace',
           fontSize: '13px',
@@ -94,15 +127,39 @@ export class GameScene extends Phaser.Scene {
         })
       .setOrigin(0.5, 1);
 
-    this.input.keyboard!.addListener('R', () => {
-      if (this.state === 'over') this.restart();
+    this.input.keyboard!.on('keydown-R', () => {
+      if (!this.campaign && this.state === 'over') this.restart();
     });
+    this.input.keyboard!.on('keydown-ENTER', () => {
+      if (this.state !== 'over') return;
+      if (this.campaign) this.toResult();
+      else this.restart();
+    });
+    // ESC toggles the pause overlay. This handler is the ONLY place that binds ESC
+    // for pausing — the overlay and any open ConfirmDialog must not also bind ESC,
+    // or two listeners would fire in one dispatch and cancel each other.
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (!this.campaign || this.state === 'over' || !this.pauseOverlay) return;
+      if (this.pauseOverlay.dialogOpen) return; // dialog owns ESC (it cancels)
+      if (this.pauseOverlay.visible) this.pauseOverlay.hide();
+      else this.pauseOverlay.show();
+    });
+    if (this.campaign) {
+      this.pauseOverlay = new PauseOverlay(
+        this,
+        this.oppTeam.name,
+        () => this.pauseOverlay?.hide(),
+        () => this.endRun('GameOverScene', { reason: 'forfeit' }),
+        () => this.endRun('TitleScene'),
+      );
+    }
 
     this.aimG = this.add.graphics().setDepth(18);
     this.setState('drop');
   }
 
   update(time: number, dtMs: number): void {
+    if (this.pauseOverlay?.visible) return; // paused: freeze the match
     const dt = Math.min(dtMs / 1000, 0.05);
 
     if (this.state === 'drop') {
@@ -809,7 +866,7 @@ export class GameScene extends Phaser.Scene {
     this.score[side] += 1;
     this.updateScoreText();
     this.setState('goal');
-    this.flash(side === 0 ? `GOAL — ${USER_TEAM.name.toUpperCase()}!` : `GOAL — ${this.oppTeam.name.toUpperCase()}!`);
+    this.flash(side === 0 ? `GOAL — ${this.userTeam.name.toUpperCase()}!` : `GOAL — ${this.oppTeam.name.toUpperCase()}!`);
   }
 
   private setState(s: MatchState): void {
@@ -821,8 +878,10 @@ export class GameScene extends Phaser.Scene {
       this.stateTimer = GOAL_PAUSE;
     } else if (s === 'over') {
       this.flash(this.score[0] > this.score[1] ? 'YOU WIN!' : 'YOU LOSE', true);
+      this.hintText.setText(this.campaign ? 'ENTER — continue' : 'R — restart').setAlpha(1);
     } else {
       this.bannerText.setAlpha(0);
+      this.hintText.setAlpha(0);
     }
   }
 
@@ -882,9 +941,29 @@ export class GameScene extends Phaser.Scene {
     this.setState('drop');
   }
 
+  /** Hand a finished campaign match to the result screen. */
+  private toResult(): void {
+    this.scene.start('ResultScene', {
+      teamId: this.oppTeam.id,
+      userScore: this.score[0],
+      opponentScore: this.score[1],
+    });
+  }
+
+  /** Forfeit / quit: the run ends in a loss, then leave the match. */
+  private endRun(sceneKey: string, data?: object): void {
+    if (this.campaign) setRun(abandonMatch(getRun()));
+    this.scene.start(sceneKey, data);
+  }
+
+  shutdown(): void {
+    this.pauseOverlay?.destroy();
+    this.pauseOverlay = null;
+  }
+
   private updateScoreText(): void {
     this.scoreText.setText(
-      `${USER_TEAM.name}  ${this.score[0]} — ${this.score[1]}  ${this.oppTeam.name}   ·   first to ${GOALS_TO_WIN}`,
+      `${this.userTeam.name}  ${this.score[0]} — ${this.score[1]}  ${this.oppTeam.name}   ·   first to ${GOALS_TO_WIN}`,
     );
   }
 

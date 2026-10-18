@@ -22,15 +22,20 @@ vi.mock('phaser', () => {
       return H.keys.get(c);
     },
     addListener: () => {},
+    on: () => {},
   };
   class Scene {
     add = H.U; tweens = H.U; time = H.U; cameras = H.U; textures = H.U; sys = H.U; scale = H.U;
     input = { keyboard: kb };
+    events = { on: () => {}, once: () => {}, off: () => {} };
     constructor(_k?: unknown) {}
   }
   return {
     default: {
       Scene,
+      // Base classes for UI objects (MenuButton/TextButton) evaluated at import time.
+      // Never instantiated in these tests — empty stubs satisfy `extends`.
+      GameObjects: { Text: class {}, Container: class {} },
       Input: { Keyboard: { JustDown: (k: any) => { const j = k._just; k._just = false; return j; }, JustUp: () => false } },
     },
   };
