@@ -121,11 +121,31 @@ export function lateralSignY(def: MoveDef, aim: number, side: 1 | -1): -1 | 0 | 
   return Math.abs(mean) < 0.18 ? 0 : mean > 0 ? 1 : -1;
 }
 
-/** Side (+1 = clockwise on screen, −1 = counter) a stick direction `dir` asks for, relative to `base` (null if not sideways enough). */
-export function sideFromStick(base: number, dir: Vec2): 1 | -1 | null {
-  const cross = Math.cos(base) * dir.y - Math.sin(base) * dir.x;
-  return Math.abs(cross) < 0.5 ? null : cross > 0 ? 1 : -1;
+/**
+ * The Deke is a SIDESTEP ACROSS THE NET: it always goes up or down the screen, toward the more
+ * open side of the ice — skating low it fakes low and cuts HIGH, and the reverse. That makes the
+ * direction predictable (and the goalie's bite readable). Within `CENTRE_BAND` of the middle there is
+ * no "more open side", so it goes away from the nearest defender (default: down).
+ */
+export const DEKE_CENTRE_BAND = 12;
+export function dekeVerticalDir(posY: number, centreY: number, threatY: number | null): -1 | 1 {
+  const off = posY - centreY;
+  if (Math.abs(off) > DEKE_CENTRE_BAND) return off > 0 ? -1 : 1; // low (y big) → go up; high → go down
+  if (threatY !== null) return threatY > posY ? -1 : 1;
+  return 1;
 }
+
+/** The (base heading, side) that make the Deke's zig-zag go `dirY` (−1 up / +1 down) for this team (team 0 attacks right, team 1 left). */
+export function dekeAxis(team: 0 | 1, dirY: -1 | 1): { base: number; side: 1 | -1 } {
+  const base = team === 0 ? 0 : Math.PI; // the weave leans toward the team's attacking end first
+  return { base, side: team === 0 ? dirY : ((-dirY) as 1 | -1) };
+}
+
+/** Absolute screen direction a stick asks for (UP = −1, DOWN = +1), or null if it isn't pushed up/down enough. */
+export function verticalFromStick(dir: Vec2): -1 | 1 | null {
+  return Math.abs(dir.y) < 0.5 ? null : dir.y > 0 ? 1 : -1;
+}
+
 
 /** Which way to go (+1 = clockwise on screen / −1) so the move heads AWAY from `threat`. */
 export function sideAwayFrom(facing: number, pos: Vec2, threat: Vec2 | null): 1 | -1 {

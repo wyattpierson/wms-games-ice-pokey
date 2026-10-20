@@ -13,7 +13,7 @@ const HELP_LINES = [
   ['MOVE', 'ARROWS / WASD'],
   ['PASS · SWITCH', 'SPACE'],
   ['SHOOT', 'HOLD SHIFT — aim UP/DOWN, release on the white ring'],
-  ['SKILL MOVES', 'E SPIN · F DEKE sidestep (UP/DOWN = which side)'],
+  ['SKILL MOVES', 'E SPIN · F DEKE: fake low, cut high (UP/DOWN picks)'],
   ['PARRY', "defending: press the ATTACKER'S key on the white ring, from in front"],
   ['CHECK', 'SHIFT defending: bumps a walker; BEFORE a juke = a wall'],
   ['PRESSURE', 'a defender on you strips the puck: pass, shoot or juke'],

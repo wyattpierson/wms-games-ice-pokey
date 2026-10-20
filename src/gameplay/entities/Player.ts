@@ -7,7 +7,10 @@ import {
 import type { AIPlan } from '../../core/aiPlan';
 import { ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
 import { clamp, len, v, type Vec2 } from '../../core/vec2';
-import { dashHeading, dashSpeedAt, MOVE_DEFS, sideAwayFrom, type MoveId } from '../../core/moves';
+import {
+  dashHeading, dashSpeedAt, dekeAxis, dekeVerticalDir, MOVE_DEFS, sideAwayFrom, type MoveId,
+} from '../../core/moves';
+import { CENTER_Y } from '../../config/rink';
 import type { GoalieStance } from '../../core/goalie';
 import { guardRadiusFor, stuffRangeFor } from '../../core/stats';
 import type { HockeyStats } from '../../core/stats';
@@ -236,8 +239,15 @@ export class Player {
    */
   startMove(id: MoveId, tellScale = 1, threat: Vec2 | null = null): boolean {
     if (!this.canStartMove()) return false;
-    this.moveSide = sideAwayFrom(this.facing, this.pos, threat);
-    this.moveBase = this.facing;
+    if (id === 'deke') {
+      // Always across the net toward the more open side (low → cuts high), not relative to where you're facing.
+      const ax = dekeAxis(this.team, dekeVerticalDir(this.pos.y, CENTER_Y, threat ? threat.y : null));
+      this.moveSide = ax.side;
+      this.moveBase = ax.base;
+    } else {
+      this.moveSide = sideAwayFrom(this.facing, this.pos, threat);
+      this.moveBase = this.facing;
+    }
     this.move = id;
     this.moveT = 0;
     this.moveResolved = false;

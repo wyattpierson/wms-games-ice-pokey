@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, lateralSignY, MOVE_DEFS, movePhase, parryTiming, sideAwayFrom,
-  sideFromStick, windowSeconds,
+  ALL_MOVES, dashHeading, dashSpeedAt, dekeAxis, dekeVerticalDir, inFrontCone, lateralSignY, MOVE_DEFS, movePhase,
+  parryTiming, sideAwayFrom, verticalFromStick, windowSeconds,
 } from './moves';
 import { PARRY_CONE_HALF } from '../config/gameplay';
 import { v } from './vec2';
@@ -141,18 +141,44 @@ describe('move paths: Spin curves round, Deke zig-zags sideways', () => {
   });
 });
 
-describe('lateralSignY / sideFromStick (goalie bite + picking the Deke side)', () => {
+describe('Deke direction: always across the net, toward the open side', () => {
   it('lateralSignY says which way a move ends up on screen, mirrored by side', () => {
     expect(lateralSignY(MOVE_DEFS.deke, 0, 1)).toBe(1); // facing right, clockwise side → down
     expect(lateralSignY(MOVE_DEFS.deke, 0, -1)).toBe(-1);
     expect(lateralSignY(MOVE_DEFS.deke, Math.PI, 1)).toBe(-1); // facing left it mirrors
   });
-  it('sideFromStick: pushing sideways relative to travel picks the side; along travel does not', () => {
-    expect(sideFromStick(0, v(0, 1))).toBe(1); // heading right, stick down → clockwise
-    expect(sideFromStick(0, v(0, -1))).toBe(-1);
-    expect(sideFromStick(Math.PI, v(0, 1))).toBe(-1); // heading left, stick down → counter-clockwise
-    expect(sideFromStick(0, v(1, 0))).toBeNull();
-    expect(sideFromStick(0, v(0.7, 0.4))).toBeNull(); // too diagonal
+  it('verticalFromStick: UP / DOWN are absolute screen directions; sideways pushes are ignored', () => {
+    expect(verticalFromStick(v(0, 1))).toBe(1);
+    expect(verticalFromStick(v(0, -1))).toBe(-1);
+    expect(verticalFromStick(v(0.6, -0.8))).toBe(-1);
+    expect(verticalFromStick(v(1, 0))).toBeNull();
+    expect(verticalFromStick(v(0.95, 0.3))).toBeNull();
+  });
+});
+
+describe('dekeVerticalDir / dekeAxis', () => {
+  it('skating LOW it cuts HIGH, and skating high it cuts low (toward the more open side)', () => {
+    expect(dekeVerticalDir(500, 336, null)).toBe(-1); // low on screen → up
+    expect(dekeVerticalDir(150, 336, null)).toBe(1); // high → down
+  });
+  it('right on the middle there is no open side: away from the nearest defender, else down', () => {
+    expect(dekeVerticalDir(336, 336, 300)).toBe(1); // defender above → go down
+    expect(dekeVerticalDir(336, 336, 380)).toBe(-1);
+    expect(dekeVerticalDir(340, 336, null)).toBe(1);
+  });
+  it('dekeAxis makes the zig-zag go the asked way for BOTH teams, mostly vertical, weaving toward their attacking end', () => {
+    for (const team of [0, 1] as const) {
+      for (const dirY of [-1, 1] as const) {
+        const { base, side } = dekeAxis(team, dirY);
+        expect(lateralSignY(MOVE_DEFS.deke, base, side)).toBe(dirY);
+        for (let i = 0; i <= 20; i++) {
+          const h = dashHeading(MOVE_DEFS.deke, base, side, i / 20);
+          expect(Math.sign(Math.sin(h))).toBe(dirY); // never turns back across the net
+        }
+      }
+    }
+    expect(Math.cos(dekeAxis(0, 1).base)).toBeGreaterThan(0); // team 0 attacks right
+    expect(Math.cos(dekeAxis(1, 1).base)).toBeLessThan(0);
   });
 });
 

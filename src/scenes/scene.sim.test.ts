@@ -1128,28 +1128,52 @@ describe('check strength scales with the checker\'s Defense', () => {
 });
 const dist2 = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y);
 
-describe('Deke: the stick picks the side of the sidestep', () => {
-  const dekeDy = (stick: 'UP' | 'DOWN' | null) => {
+describe('Deke: always across the net, toward the open side', () => {
+  /** Carrier at (x, y) skating `heading` (rad) when F is pressed; optionally pushes UP/DOWN during the wind-up. */
+  const dekeFrom = (y: number, heading: number, stick: 'UP' | 'DOWN' | null = null, team: 0 | 1 = 0) => {
     releaseAll();
     const { s } = makeScene(0);
-    const me = s.players[0];
-    unfreeze(me, 300, 336); s.grantPuck(me);
-    hold('RIGHT'); step(s, 40);
-    const k = H.keys.get('F'); k._just = true; k.isDown = true; step(s); k.isDown = false;
-    if (stick) { hold('RIGHT', false); hold(stick); } // point sideways during the wind-up
-    while (me.move && !me.moveResolved) step(s);
-    if (stick) hold(stick, false);
-    const y0 = me.pos.y, x0 = me.pos.x;
+    const me = s.players[team === 0 ? 0 : 4];
+    unfreeze(me, 640, y); me.facing = heading; s.grantPuck(me);
+    if (team === 0) {
+      const dirKey = Math.cos(heading) >= 0 ? 'RIGHT' : 'LEFT';
+      hold(dirKey); step(s, 30);
+      const k = H.keys.get('F'); k._just = true; k.isDown = true; step(s); k.isDown = false;
+      if (stick) { hold(dirKey, false); hold(stick); }
+      while (me.move && !me.moveResolved) step(s);
+      if (stick) hold(stick, false);
+    } else {
+      me.moveCd = 0; me.startMove('deke', 1, null); me.moveCd = 99;
+      while (me.move && !me.moveResolved) step(s);
+    }
+    const x0 = me.pos.x, y0 = me.pos.y;
     for (let i = 0; i < 40 && me.dashing; i++) step(s);
-    hold('RIGHT', false);
+    hold('RIGHT', false); hold('LEFT', false);
     return { dy: me.pos.y - y0, dx: me.pos.x - x0 };
   };
-  it('UP in the wind-up sidesteps up, DOWN sidesteps down — and both barely move you forward', () => {
-    const up = dekeDy('UP'), down = dekeDy('DOWN');
-    expect(up.dy).toBeLessThan(-85);
-    expect(down.dy).toBeGreaterThan(85);
-    expect(Math.abs(up.dx)).toBeLessThan(50);
-    expect(Math.abs(down.dx)).toBeLessThan(50);
+
+  it('LOW on the ice it cuts UP; HIGH on the ice it cuts DOWN', () => {
+    expect(dekeFrom(520, 0).dy).toBeLessThan(-85);
+    expect(dekeFrom(150, 0).dy).toBeGreaterThan(85);
+  });
+  it('…regardless of which way you are skating (the old version depended on your heading)', () => {
+    for (const heading of [0, Math.PI, Math.PI / 4, -Math.PI / 4, Math.PI * 0.8]) {
+      expect(dekeFrom(520, heading).dy).toBeLessThan(-85);
+      expect(dekeFrom(150, heading).dy).toBeGreaterThan(85);
+    }
+  });
+  it('it barely moves you toward (or away from) the goal', () => {
+    for (const y of [150, 520]) expect(Math.abs(dekeFrom(y, 0).dx)).toBeLessThan(45);
+  });
+  it('the AI team (attacking left) follows the same rule', () => {
+    expect(dekeFrom(520, Math.PI, null, 1).dy).toBeLessThan(-85);
+    expect(dekeFrom(150, Math.PI, null, 1).dy).toBeGreaterThan(85);
+  });
+  it('UP / DOWN during the wind-up overrides it — as an absolute screen direction', () => {
+    // (positions leave room before the boards: the ice is y 56–616 and the sidestep is ~115px)
+    expect(dekeFrom(450, 0, 'DOWN').dy).toBeGreaterThan(85); // low, but you asked for down
+    expect(dekeFrom(220, 0, 'UP').dy).toBeLessThan(-85);
+    expect(dekeFrom(220, Math.PI, 'UP').dy).toBeLessThan(-85); // same when skating left
   });
 });
 

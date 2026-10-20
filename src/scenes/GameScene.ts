@@ -19,7 +19,7 @@ import { abandonMatch } from '../core/campaign';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
 import {
-  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, lateralSignY, MOVE_DEFS, parryTiming, sideFromStick,
+  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, dekeAxis, lateralSignY, MOVE_DEFS, parryTiming, verticalFromStick,
   windowSeconds, type MoveId,
 } from '../core/moves';
 import { respectAfterFool } from '../core/goalie';
@@ -143,9 +143,7 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0);
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
-        'Arrows / WASD move · SPACE pass / switch · hold SHIFT = shoot (↑/↓ aims, release when the goalie ring turns white)\n' +
-          'E Spin · F Deke   (defending: press the SAME key when the ring turns white, from IN FRONT of them)\n' +
-          'SHIFT while defending = CHECK (hit + block, no steal) · pass, then press SHIFT as it arrives = ONE-TIMER · ' +
+        'Arrows move · SPACE pass / switch · SHIFT = shoot / check · E / F = Juke / Counter · ' +
           (this.campaign ? 'ESC pause' : 'R restart'),
         {
           fontFamily: 'monospace',
@@ -270,10 +268,14 @@ export class GameScene extends Phaser.Scene {
         // point at the end of the tell is where the dash goes.
         if (dir.x || dir.y) {
           c.applyInput(dir, dt, TELL_STEER);
-          // Deke = a sidestep: pushing sideways (relative to your travel when it started) picks the side.
+          // Deke goes toward the open side by default; UP / DOWN during the wind-up overrides it (absolute screen direction).
           if (c.move === 'deke') {
-            const sd = sideFromStick(c.moveBase, norm(dir));
-            if (sd) c.moveSide = sd;
+            const want = verticalFromStick(norm(dir));
+            if (want) {
+              const ax = dekeAxis(c.team, want);
+              c.moveBase = ax.base;
+              c.moveSide = ax.side;
+            }
           }
         } else c.coast(dt);
       } else if (moveDir.x || moveDir.y) c.applyInput(moveDir, dt, moveFactor);
