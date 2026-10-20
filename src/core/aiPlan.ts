@@ -6,11 +6,10 @@
  *     early or late and whiffs;
  *   - it can't press before `aiReaction` seconds, so a slow AI is simply late;
  *   - it can misread the move (picks the wrong key → whiff);
- *   - a check (guard) must land in time to still be up when the move resolves.
+ *   - a check (guard) must be planted within CHECK_PREPLANT_GRACE of the tell starting to stuff the move.
  */
 
 import type { Difficulty } from '../config/difficulty';
-import { CHECK_TIME } from '../config/gameplay';
 import { windowSeconds, type MoveId } from './moves';
 
 export type AIPlan =
@@ -58,9 +57,10 @@ export function planAiResponse(i: PlanInput): AIPlan {
   }
 
   if (r < pParry + diff.aiGuardRate) {
-    // The stance must still be up when the move resolves at `tell`.
-    const ideal = Math.max(reaction * 0.9, tell - CHECK_TIME * 0.6);
-    return { kind: 'guard', at: Math.max(0.02, ideal + gauss(rng) * sigma * 0.7) };
+    // A check only stuffs a move if it was up when the tell BEGAN (± CHECK_PREPLANT_GRACE), so a
+    // reactive one is planted as early as the AI's reaction allows: quick/sharp defenders catch
+    // you with it, slow ones are simply late and get juked (see GameScene.finishMove).
+    return { kind: 'guard', at: Math.max(0.02, reaction * 0.9 + gauss(rng) * sigma * 0.35) };
   }
   return { kind: 'none' };
 }

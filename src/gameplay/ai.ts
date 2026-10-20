@@ -10,14 +10,17 @@
  */
 
 import {
-  GOALIE_DEPTH, GOALIE_DIVE_FACTOR, GOALIE_SHOT_SPEED, ONE_TIMER_REACT_MULT, PARRY_RANGE, SHOT_RANGE,
+  FRIENDLY_GOALIE_BITE, FRIENDLY_GOALIE_LAG, FRIENDLY_GOALIE_READ, GOALIE_BITE_OFFSET, GOALIE_DEPTH,
+  GOALIE_DIVE_FACTOR, GOALIE_FOOL_RANGE, GOALIE_FOOL_SPEED, GOALIE_SHOT_SPEED, ONE_TIMER_REACT_MULT,
+  PARRY_RANGE, SHOT_RANGE,
 } from '../config/gameplay';
 import type { Difficulty } from '../config/difficulty';
 import {
   CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W,
 } from '../config/rink';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
-import { ALL_MOVES, type MoveId } from '../core/moves';
+import { ALL_MOVES, lateralSignY, MOVE_DEFS, type MoveId } from '../core/moves';
+import { planGoalieResponse } from '../core/goalie';
 import { planAiResponse } from '../core/aiPlan';
 import type { Player } from './entities/Player';
 import type { Puck } from './entities/Puck';
@@ -38,7 +41,7 @@ export function nearestThreat(p: Player, players: Player[], maxD = 170): Vec2 | 
 }
 
 /** An AI defender plants a check when a dribbling carrier is this close and heading at them. */
-const PRESSURE_RANGE = 70;
+const DRIBBLE_GUARD_RANGE = 70;
 
 export interface AIWorld {
   players: Player[];
@@ -54,6 +57,8 @@ export interface AIWorld {
   parry: (defender: Player, carrier: Player, key: MoveId) => void;
   /** AI check (block stance). */
   check: (defender: Player) => void;
+  /** Where the puck was `lag` seconds ago (goalies position off this). Optional: falls back to the live puck. */
+  puckAt?: (lag: number) => Vec2;
 }
 
 export function stepAI(p: Player, w: AIWorld): void {
@@ -109,7 +114,7 @@ function this_step1v1(p: Player, w: AIWorld, carrier: Player): void {
       if (plan.kind === 'parry') w.parry(p, carrier, plan.key);
       else w.check(p);
     }
-  } else if (p.checkCd <= 0 && dist(p.pos, carrier.pos) < PRESSURE_RANGE) {
+  } else if (p.checkCd <= 0 && dist(p.pos, carrier.pos) < DRIBBLE_GUARD_RANGE) {
     // Dribbling straight at me? Plant and block forward progress.
     const toMe = norm(sub(p.pos, carrier.pos));
     const heading = norm(carrier.vel);
@@ -238,14 +243,25 @@ function stepCarrier(p: Player, w: AIWorld): void {
 
   const enemyGoal = p.team === 0 ? v(ICE_X + RINK_W, CENTER_Y) : v(ICE_X, CENTER_Y);
 
-  // Juke when a defender is in the way (chance per second; difficulty-scaled).
+  // The goalie just got fooled by our move: take the open net while the window lasts.
+  const eg = w.players.find((e) => e.team !== p.team && e.isGoalie);
+  if (eg && eg.fooledT > 0 && !eg.foolSpent && eg.openSign !== 0 && dist(p.pos, enemyGoal) < SHOT_RANGE + 60 && w.rng() < w.diff.aiFoolShotRate * w.dt) {
+    w.shoot(p, eg.openSign * (0.75 + w.rng() * 0.2), 0.5);
+    return;
+  }
+
+  // Pressure: a defender on top of us is stripping the puck — do SOMETHING (juke sooner, or dump it off).
+  const pr = p.pressure;
+  if (pr > 0.55 && p.decideTimer > 0.15) p.decideTimer = 0.15;
+
+  // Juke when a defender is in the way (chance per second; difficulty-scaled; more when pressured).
   const range = w.diff.aiJukeRange;
   let td = range;
   for (const e of w.players) {
     if (e.team === p.team || e.down) continue;
     td = Math.min(td, dist(e.pos, p.pos));
   }
-  if (td < range && p.canStartMove() && w.rng() < w.diff.aiJukeRate * w.dt) {
+  if (td < range && p.canStartMove() && w.rng() < w.diff.aiJukeRate * (1 + 2.5 * pr) * w.dt) {
     if (p.startMove(ALL_MOVES[Math.floor(w.rng() * ALL_MOVES.length)], w.diff.aiTellScale, nearestThreat(p, w.players))) {
       p.moveCd *= w.diff.aiMoveCdScale; // easy levels juke more often (so you can practise defending)
     }
@@ -267,7 +283,7 @@ function stepCarrier(p: Player, w: AIWorld): void {
       } else {
         w.pass(p, rec);
       }
-    } else if (rec && w.rng() < 0.3) {
+    } else if (rec && w.rng() < (pr > 0.55 ? 0.9 : 0.3)) {
       w.pass(p, rec);
     }
   }
@@ -337,9 +353,43 @@ function stepGoalie(p: Player, w: AIWorld): void {
   const gx = p.team === 0 ? ICE_X + p.radius() + 4 : ICE_X + RINK_W - p.radius() - 4;
   const goalX = p.team === 0 ? ICE_X : ICE_X + RINK_W;
   const puck = w.puck;
-  const dx = Math.max(1, Math.abs(puck.pos.x - gx));
+
+  // --- Skill moves near my net: roll a response ONCE per move (read / bite / hold).
+  const carrier = puck.state === 'carried' && puck.carriedBy && puck.carriedBy.team !== p.team ? puck.carriedBy : null;
+  if (carrier && carrier.move && (p.goaliePlan.owner !== carrier || p.goaliePlan.seq !== carrier.moveSeq) && dist(carrier.pos, p.pos) <= GOALIE_FOOL_RANGE) {
+    const friendly = p.team === 0;
+    p.goaliePlan = {
+      owner: carrier,
+      seq: carrier.moveSeq,
+      stance: planGoalieResponse({
+        moveId: carrier.move,
+        lastFooled: p.lastFooled,
+        respect: p.respect,
+        puckSense: p.stats.puckSense,
+        readBase: friendly ? FRIENDLY_GOALIE_READ : w.diff.aiGoalieRead,
+        biteBase: friendly ? FRIENDLY_GOALIE_BITE : w.diff.aiGoalieBite,
+        rng: w.rng,
+      }),
+    };
+  }
+  const plan = p.goaliePlan;
+  const live = !!carrier && plan.owner === carrier && plan.seq === carrier.moveSeq && !!carrier.move;
+  const reading = live && plan.stance === 'read';
+  // Where the carrier's move ends up (screen-y): the goalie bites the OTHER way.
+  let biteDir = 0;
+  if (live && plan.stance === 'bite' && carrier && carrier.move) {
+    const aim = carrier.move === 'deke' ? carrier.moveBase : carrier.facing;
+    biteDir = -lateralSignY(MOVE_DEFS[carrier.move], aim, carrier.moveSide);
+  } else if (p.fooledT > 0) biteDir = -p.openSign; // keeps leaning out of position until the window ends
+
+  // Positioning lags the puck a little (a read goalie is locked on; a fast sidestep catches the rest leaning).
+  const lag = reading ? 0 : (p.team === 0 ? FRIENDLY_GOALIE_LAG : w.diff.aiGoalieLag) * (1.25 - 0.5 * p.stats.puckSense);
+  const track = lag > 0 && w.puckAt ? w.puckAt(lag) : puck.pos;
+  const dx = Math.max(1, Math.abs(track.x - gx));
   const shade = clamp(GOALIE_DEPTH / dx, 0.2, 0.9);
-  let ty = clamp(CENTER_Y + (puck.pos.y - CENTER_Y) * shade, GOAL_TOP - 6, GOAL_BOTTOM + 6);
+  let ty = clamp(CENTER_Y + (track.y - CENTER_Y) * shade, GOAL_TOP - 6, GOAL_BOTTOM + 6);
+  // Biting = committed to the fake side outright (not just nudged): that is what leaves the other corner open.
+  if (biteDir !== 0) ty = clamp(CENTER_Y + biteDir * GOALIE_BITE_OFFSET, GOAL_TOP - 6, GOAL_BOTTOM + 6);
 
   const sp = len(puck.vel);
   // A pass is not a shot. And a NEW launch restarts the reaction clock (otherwise the
@@ -369,6 +419,8 @@ function stepGoalie(p: Player, w: AIWorld): void {
     p.goalieReactAt = null;
   }
   const d = v(gx - p.pos.x, ty - p.pos.y);
-  if (len(d) > 5) p.applyInput(norm(d), w.dt, dive ? GOALIE_DIVE_FACTOR : 1);
+  // Fooled: caught leaning, it skates slowly until the window ends.
+  const speedMul = (dive ? GOALIE_DIVE_FACTOR : 1) * (p.fooledT > 0 ? GOALIE_FOOL_SPEED : 1);
+  if (len(d) > 5) p.applyInput(norm(d), w.dt, speedMul);
   else p.coast(w.dt);
 }

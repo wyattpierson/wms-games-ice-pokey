@@ -28,6 +28,10 @@ export class Puck {
 
   private body: Phaser.GameObjects.Ellipse;
   private shadow: Phaser.GameObjects.Ellipse;
+  /** Possession pressure on the carrier (0..1): the puck rattles on the blade and turns red. */
+  private pressure = 0;
+  private shake = 0;
+  private tintedAt = -1;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.pos = v(x, y);
@@ -45,7 +49,23 @@ export class Puck {
     this.scoredBy = null;
     this.pass = null;
     this.quick = false;
+    this.setPressure(0);
     this.place();
+  }
+
+  /** Visual only: how close the carrier is to being stripped. */
+  setPressure(p: number): void {
+    this.pressure = p;
+    // Re-colour only when the (rounded) level changes.
+    const level = p < 0.2 ? 0 : Math.round(p * 8);
+    if (level !== this.tintedAt) {
+      this.tintedAt = level;
+      const t = level === 0 ? 0 : Math.min(1, level / 8);
+      const r = Math.round(0x16 + (0xff - 0x16) * t);
+      const g = Math.round(0x18 + (0x4d - 0x18) * t);
+      const b = Math.round(0x1d + (0x4d - 0x1d) * t);
+      this.body.setFillStyle((r << 16) | (g << 8) | b);
+    }
   }
 
   /** Give the puck to a player (they become the carrier). */
@@ -143,7 +163,15 @@ export class Puck {
   }
 
   private place(): void {
-    this.body.setPosition(this.pos.x, this.pos.y);
-    this.shadow.setPosition(this.pos.x, this.pos.y);
+    let jx = 0;
+    let jy = 0;
+    if (this.state === 'carried' && this.pressure > 0.3) {
+      this.shake += 1;
+      const amp = (this.pressure - 0.3) * 5.5;
+      jx = Math.sin(this.shake * 2.9) * amp;
+      jy = Math.cos(this.shake * 3.7) * amp;
+    }
+    this.body.setPosition(this.pos.x + jx, this.pos.y + jy);
+    this.shadow.setPosition(this.pos.x + jx, this.pos.y + jy);
   }
 }

@@ -13,9 +13,11 @@ const HELP_LINES = [
   ['MOVE', 'ARROWS / WASD'],
   ['PASS · SWITCH', 'SPACE'],
   ['SHOOT', 'HOLD SHIFT — aim UP/DOWN, release on the white ring'],
-  ['SKILL MOVES', 'E SPIN · F DEKE'],
+  ['SKILL MOVES', 'E SPIN · F DEKE sidestep (UP/DOWN = which side)'],
   ['PARRY', "defending: press the ATTACKER'S key on the white ring, from in front"],
-  ['CHECK', 'SHIFT while defending (costs HP)'],
+  ['CHECK', 'SHIFT defending: bumps a walker; BEFORE a juke = a wall'],
+  ['PRESSURE', 'a defender on you strips the puck: pass, shoot or juke'],
+  ['GOALIE', 'juke near the net: if it bites, shoot the OPEN side'],
   ['ONE-TIMER', 'SPACE as a pass arrives, then release'],
   ['PAUSE', 'ESC'],
   ['', ''],
@@ -133,7 +135,7 @@ export class TitleScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
     HELP_LINES.forEach(([k, val], i) => {
-      const y = H / 2 - ph / 2 + 96 + i * 32;
+      const y = H / 2 - ph / 2 + 96 + i * 28;
       c.add(
         this.add
           .text(W / 2 - pw / 2 + 48, y, k.padEnd(14) + val, {

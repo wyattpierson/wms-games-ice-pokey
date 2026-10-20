@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, MOVE_DEFS, movePhase, parryTiming, sideAwayFrom, windowSeconds } from './moves';
+import {
+  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, lateralSignY, MOVE_DEFS, movePhase, parryTiming, sideAwayFrom,
+  sideFromStick, windowSeconds,
+} from './moves';
 import { PARRY_CONE_HALF } from '../config/gameplay';
 import { v } from './vec2';
 
@@ -71,7 +74,7 @@ describe('dashSpeedAt', () => {
   });
 });
 
-describe('move paths: Spin curves round, Deke cuts at an angle', () => {
+describe('move paths: Spin curves round, Deke zig-zags sideways', () => {
   const spin = MOVE_DEFS.spin, deke = MOVE_DEFS.deke;
   const path = (m: typeof spin, side: 1 | -1 = 1) => {
     let x = 0, y = 0;
@@ -97,11 +100,30 @@ describe('move paths: Spin curves round, Deke cuts at an angle', () => {
   it('Spin EXITS facing the aim (you wrap round the defender and keep going)', () => {
     expect(Math.abs(path(spin).exit)).toBeLessThan(0.1);
   });
-  it('Deke is a straight CUT: constant heading at a real angle off the aim', () => {
-    const h0 = dashHeading(deke, 0.3, 1, 0);
-    for (let i = 1; i <= 10; i++) expect(dashHeading(deke, 0.3, 1, i / 10)).toBeCloseTo(h0, 9);
-    expect(h0 - 0.3).toBeGreaterThan(0.5);
-    expect(path(deke).exit).toBeGreaterThan(0.5); // …and exits angled off to the side
+  it('Deke is a SIDESTEP: it goes mostly across your travel and barely toward the goal', () => {
+    const p = path(deke);
+    expect(Math.abs(p.y)).toBeGreaterThan(90); // a real lateral shift (angle on the goalie)
+    expect(Math.abs(p.x)).toBeLessThan(35); // …without zooming forward into the crease
+    expect(Math.abs(p.y)).toBeGreaterThan(Math.abs(p.x) * 3);
+  });
+  it('Deke ZIG-ZAGS: the heading weaves back and forth across the sideways line', () => {
+    const lateral = deke.headFrom;
+    let crossings = 0;
+    let prev = Math.sign(dashHeading(deke, 0, 1, 0) - lateral);
+    for (let i = 1; i <= 100; i++) {
+      const sgn = Math.sign(dashHeading(deke, 0, 1, i / 100) - lateral);
+      if (sgn !== 0 && sgn !== prev) crossings++;
+      if (sgn !== 0) prev = sgn;
+    }
+    expect(crossings).toBeGreaterThanOrEqual(2); // out, back, out
+    // …but it never turns around: the whole weave stays on the same side of the travel line.
+    for (let i = 0; i <= 100; i++) {
+      const h = dashHeading(deke, 0, 1, i / 100);
+      expect(Math.sin(h)).toBeGreaterThan(0.2);
+    }
+  });
+  it('Deke is unaffected by the weave when zigAmp is absent (Spin is still a smooth monotonic curve)', () => {
+    expect(spin.zigAmp).toBeUndefined();
   });
   it('side flips the direction symmetrically', () => {
     for (const m of [spin, deke]) {
@@ -115,7 +137,22 @@ describe('move paths: Spin curves round, Deke cuts at an angle', () => {
     expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(60); // different end points
     expect(Math.abs(a.exit - b.exit)).toBeGreaterThan(0.6); // different exit headings
     expect(Math.abs(b.y)).toBeGreaterThan(Math.abs(a.y)); // deke ends further off to the side
-    expect(Math.hypot(b.x, b.y)).toBeGreaterThan(Math.hypot(a.x, a.y)); // …and the slow move goes further
+    expect(a.x).toBeGreaterThan(b.x + 60); // …while Spin is the one that carries you FORWARD past a defender
+  });
+});
+
+describe('lateralSignY / sideFromStick (goalie bite + picking the Deke side)', () => {
+  it('lateralSignY says which way a move ends up on screen, mirrored by side', () => {
+    expect(lateralSignY(MOVE_DEFS.deke, 0, 1)).toBe(1); // facing right, clockwise side → down
+    expect(lateralSignY(MOVE_DEFS.deke, 0, -1)).toBe(-1);
+    expect(lateralSignY(MOVE_DEFS.deke, Math.PI, 1)).toBe(-1); // facing left it mirrors
+  });
+  it('sideFromStick: pushing sideways relative to travel picks the side; along travel does not', () => {
+    expect(sideFromStick(0, v(0, 1))).toBe(1); // heading right, stick down → clockwise
+    expect(sideFromStick(0, v(0, -1))).toBe(-1);
+    expect(sideFromStick(Math.PI, v(0, 1))).toBe(-1); // heading left, stick down → counter-clockwise
+    expect(sideFromStick(0, v(1, 0))).toBeNull();
+    expect(sideFromStick(0, v(0.7, 0.4))).toBeNull(); // too diagonal
   });
 });
 

@@ -40,6 +40,16 @@ export interface Difficulty {
   aiCheckDamage: number;
   /** AI shot accuracy: aim is uniform in ±this × the goal mouth (>1 means it can shoot wide). */
   aiShotSpread: number;
+  /** How fast AI defenders strip a carrier under possession pressure (× the base rate; only applied to the USER's carrier). */
+  aiPressure: number;
+  /** Base chance the opposing goalie READS a skill move (× puckSense factor; see core/goalie.ts). */
+  aiGoalieRead: number;
+  /** Of the moves it doesn't read, the share the opposing goalie BITES on (is fooled by). */
+  aiGoalieBite: number;
+  /** Seconds the opposing goalie's positioning lags the puck (× a puckSense factor). */
+  aiGoalieLag: number;
+  /** Per-second rate at which an AI carrier takes the open-net shot after fooling the goalie. */
+  aiFoolShotRate: number;
   /** Show the key letter above a carrier's tell (learning aid; off at high levels). */
   showKeyHint: boolean;
 }
@@ -51,9 +61,9 @@ const EASY: Numeric = {
   aiTellScale: 1.7,
   aiReaction: 0.6,
   aiTimingError: 0.2,
-  aiParryRate: 0.25,
+  aiParryRate: 0.3,
   aiReadChance: 0.5,
-  aiGuardRate: 0.2,
+  aiGuardRate: 0.1,
   aiPressureGuard: 0.4,
   aiJukeRate: 3.0,
   aiJukeRange: 170,
@@ -63,6 +73,11 @@ const EASY: Numeric = {
   aiGoalieSpeed: 0.9,
   aiOneTimerRate: 0.1,
   aiCheckDamage: 0.6,
+  aiPressure: 0.6,
+  aiGoalieRead: 0.14,
+  aiGoalieBite: 0.8,
+  aiGoalieLag: 0.28,
+  aiFoolShotRate: 3,
 };
 
 const HARD: Numeric = {
@@ -70,9 +85,9 @@ const HARD: Numeric = {
   aiTellScale: 1.0,
   aiReaction: 0.17,
   aiTimingError: 0.035,
-  aiParryRate: 0.4,
+  aiParryRate: 0.56,
   aiReadChance: 0.95,
-  aiGuardRate: 0.28,
+  aiGuardRate: 0.14,
   aiPressureGuard: 1.0,
   aiJukeRate: 1.8,
   aiJukeRange: 130,
@@ -82,6 +97,11 @@ const HARD: Numeric = {
   aiGoalieSpeed: 1.0,
   aiOneTimerRate: 0.45,
   aiCheckDamage: 1.0,
+  aiPressure: 1.0,
+  aiGoalieRead: 0.42,
+  aiGoalieBite: 0.5,
+  aiGoalieLag: 0.18,
+  aiFoolShotRate: 8,
 };
 
 export const SHOW_KEY_HINT_BELOW_LEVEL = 0.7;

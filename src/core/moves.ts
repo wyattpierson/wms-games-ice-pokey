@@ -31,8 +31,12 @@ export interface MoveDef {
   stagger: number;
   /** Dash heading offset (rad, off the aim) at the START of the dash. Signed by the move's side. */
   headFrom: number;
-  /** …and at the END. from ≠ to is a CURVE (Spin: swing out, curve back round); from = to is a straight CUT (Deke). */
+  /** …and at the END. from ≠ to is a CURVE (Spin: swing out, curve back round); from = to is a straight line. */
   headTo: number;
+  /** ZIG-ZAG: the heading also weaves ± this many rad around the line above (Deke: a sidestep that zig-zags). */
+  zigAmp?: number;
+  /** …and this many full weave cycles over the dash (1.5 = out, back, out). */
+  zigCycles?: number;
   /** Tell colour (readability layer; the badge SHAPE also differs per move). */
   color: number;
 }
@@ -40,8 +44,13 @@ export interface MoveDef {
 export const MOVE_DEFS: Record<MoveId, MoveDef> = {
   // Fast + cheap: short tell, modest payoff.
   spin: { id: 'spin', tell: 0.3, effect: 0.22, dash: 720, knock: 260, knockRadius: 60, stagger: 0.3, headFrom: 0.95, headTo: 0, color: 0xff9f1c },
-  // Slow + big: long tell (easy to parry), the biggest payoff.
-  deke: { id: 'deke', tell: 0.5, effect: 0.28, dash: 880, knock: 340, knockRadius: 85, stagger: 0.45, headFrom: 0.8, headTo: 0.8, color: 0xffd60a },
+  // Slow + big: long tell (easy to parry). A zig-zag SIDESTEP: it barely moves you toward the goal
+  // (≈10px) but slides you ≈115px across the ice (85–155 by skill) — the way to create a shooting
+  // angle on a goalie (and to get out of a defender's parry cone). Tuned numerically in the notes.
+  deke: {
+    id: 'deke', tell: 0.5, effect: 0.32, dash: 580, knock: 280, knockRadius: 70, stagger: 0.4,
+    headFrom: 1.5, headTo: 1.5, zigAmp: 0.9, zigCycles: 1.5, color: 0xffd60a,
+  },
   // Built but disabled (see ENABLED_MOVES).
   crossover: { id: 'crossover', tell: 0.35, effect: 0.18, dash: 760, knock: 280, knockRadius: 55, stagger: 0.3, headFrom: 0.9, headTo: 0.9, color: 0x4cc9f0 },
 };
@@ -94,7 +103,28 @@ export function dashSpeedAt(dashSpeed: number, ph: number): number {
 export function dashHeading(def: MoveDef, aim: number, side: 1 | -1, ph: number): number {
   const p = Math.max(0, Math.min(1, ph));
   const smooth = p * p * (3 - 2 * p);
-  return aim + side * (def.headFrom + (def.headTo - def.headFrom) * smooth);
+  // Zig-zag moves weave around the base line: starts leaning forward of it, swings back across it, …
+  const zig = def.zigAmp ? -def.zigAmp * Math.cos(Math.PI * 2 * (def.zigCycles ?? 1) * p) : 0;
+  return aim + side * (def.headFrom + (def.headTo - def.headFrom) * smooth + zig);
+}
+
+/**
+ * Which way (screen-y sign: −1 up / +1 down / 0 = mostly along x) a move carries `aim`-facing
+ * skater sideways overall. The goalie uses it to know which side is the FAKE (it bites the
+ * opposite way) and which is OPEN (where the move ends up).
+ */
+export function lateralSignY(def: MoveDef, aim: number, side: 1 | -1): -1 | 0 | 1 {
+  let y = 0;
+  const N = 24;
+  for (let i = 0; i < N; i++) y += Math.sin(dashHeading(def, aim, side, (i + 0.5) / N)) * (1 - 0.45 * (i / N) ** 2);
+  const mean = y / N;
+  return Math.abs(mean) < 0.18 ? 0 : mean > 0 ? 1 : -1;
+}
+
+/** Side (+1 = clockwise on screen, −1 = counter) a stick direction `dir` asks for, relative to `base` (null if not sideways enough). */
+export function sideFromStick(base: number, dir: Vec2): 1 | -1 | null {
+  const cross = Math.cos(base) * dir.y - Math.sin(base) * dir.x;
+  return Math.abs(cross) < 0.5 ? null : cross > 0 ? 1 : -1;
 }
 
 /** Which way to go (+1 = clockwise on screen / −1) so the move heads AWAY from `threat`. */

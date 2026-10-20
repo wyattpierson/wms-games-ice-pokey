@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import {
-  AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_COOLDOWN, CHECK_DAMAGE_BASE, CHECK_DAMAGE_PER_DEF,
-  CHECK_HIT_REACH, CHECK_HIT_STAGGER, CHECK_KNOCK, CHECK_RUNIN_MIN, CHECK_TIME, DOWN_TIME, HP_REGEN_DELAY,
+  AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_BUMP_BASE, CHECK_BUMP_PER_DEF, CHECK_COOLDOWN_BASE,
+  CHECK_COOLDOWN_PER_DEF, CHECK_DAMAGE_BASE, CHECK_DAMAGE_PER_DEF, CHECK_HIT_REACH, CHECK_PREPLANT_GRACE,
+  CHECK_PRESSURE_BASE, CHECK_PRESSURE_PER_DEF, CHECK_RUNIN_MIN, CHECK_STAGGER_BASE, CHECK_STAGGER_PER_DEF,
+  CHECK_TIME, DOWN_TIME, HP_REGEN_DELAY, GOALIE_FOOL_MIN_CHARGE, GOALIE_FOOL_RANGE, GOALIE_FOOL_TIME,
+  GOALIE_POKE_RANGE, PRESSURE_LOCKOUT, PRESSURE_RANGE, PRESSURE_STRIP_SPEED,
   ONE_TIMER_GRACE, ONE_TIMER_LEAD, ONE_TIMER_MULT, ONE_TIMER_RING_TIME, PARRY_CONE_HALF, SHOT_RANGE, COUNTER_BURST,
   DROP_TIME, GOALIE_SAVE_COOLDOWN, GOALIE_SAVE_DEFLECT_SPEED,
   GOALIE_SAVE_RADIUS, GOALS_TO_WIN, GOAL_PAUSE, PARRY_RANGE, PASS_SPEED, PICKUP_DELAY,
@@ -16,8 +19,11 @@ import { abandonMatch } from '../core/campaign';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
 import {
-  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, MOVE_DEFS, parryTiming, windowSeconds, type MoveId,
+  ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, lateralSignY, MOVE_DEFS, parryTiming, sideFromStick,
+  windowSeconds, type MoveId,
 } from '../core/moves';
+import { respectAfterFool } from '../core/goalie';
+import { stepPressure, type Presser } from '../core/pressure';
 import { deriveStats } from '../core/stats';
 import { nearestThreat, stepAI, type AIWorld } from '../gameplay/ai';
 import { Controls } from '../gameplay/controls';
@@ -55,6 +61,8 @@ export class GameScene extends Phaser.Scene {
   private stateTimer = 0;
   private controlled: Player | null = null;
   private aimG!: Phaser.GameObjects.Graphics; // shot-aim reticle + guide
+  private pressG!: Phaser.GameObjects.Graphics; // possession-pressure contact lines + the defender's pressure ring
+  private puckHist: Array<{ t: number; pos: Vec2 }> = []; // recent puck positions (the goalie's positioning lags behind them)
   private trailTick = 0;
   private clock = 0; // seconds of live play
   private oneTimerArmed: { player: Player; until: number } | null = null; // a Shoot press made inside the one-timer window
@@ -175,6 +183,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.aimG = this.add.graphics().setDepth(18);
+    this.pressG = this.add.graphics().setDepth(14);
     this.updateScoreText(); // show 0 — 0 at kickoff (it used to stay blank until the first goal)
     this.setState('drop');
   }
@@ -259,8 +268,14 @@ export class GameScene extends Phaser.Scene {
       else if (committed) {
         // Mid-tell you can still shuffle (reduced control) — and where you
         // point at the end of the tell is where the dash goes.
-        if (dir.x || dir.y) c.applyInput(dir, dt, TELL_STEER);
-        else c.coast(dt);
+        if (dir.x || dir.y) {
+          c.applyInput(dir, dt, TELL_STEER);
+          // Deke = a sidestep: pushing sideways (relative to your travel when it started) picks the side.
+          if (c.move === 'deke') {
+            const sd = sideFromStick(c.moveBase, norm(dir));
+            if (sd) c.moveSide = sd;
+          }
+        } else c.coast(dt);
       } else if (moveDir.x || moveDir.y) c.applyInput(moveDir, dt, moveFactor);
       else c.coast(dt);
 
@@ -348,6 +363,19 @@ export class GameScene extends Phaser.Scene {
       for (const p of this.players) p.shotCue = null;
     }
 
+    // A goalie that has been FOOLED by a landed move says so (the shooter's snap-shot window).
+    for (const gk of this.players) {
+      if (!gk.isGoalie || gk.fooledT <= 0 || gk.foolSpent) continue;
+      const mine = gk.team === 1; // the user's shot at it
+      gk.shotCue = {
+        progress: clamp(1 - gk.fooledT / GOALIE_FOOL_TIME, 0, 1),
+        openAt: 0,
+        inWindow: true,
+        label: mine ? 'OPEN!' : 'BEATEN!',
+        color: mine ? 0xffd60a : 0xff6b6b,
+      };
+    }
+
     // 3. AI: one chaser per team; everyone else zones / carries / goalies.
     const chaserOf: Array<Player | null> = [null, null];
     if (this.puck.state === 'loose') {
@@ -376,6 +404,7 @@ export class GameScene extends Phaser.Scene {
       shoot: (f, aimY, charge) => this.shootPuck(f, aimY, charge),
       parry: (d, _carrier, key) => this.tryParry(d, key),
       check: (d) => this.doCheck(d),
+      puckAt: (lag) => this.puckAt(lag),
     };
 
     // Tell hints: when the user is DEFENDING, the opposing carrier's tell shows
@@ -398,6 +427,17 @@ export class GameScene extends Phaser.Scene {
       p.update(dt, this.puck.pos);
     }
 
+    // A check that was already up when a juke's tell began is a WALL and holds through the whole
+    // wind-up (the defender stays rooted — that's the price). One thrown later than that can't stuff it.
+    for (const p of this.players) {
+      if (!p.move || p.moveResolved) continue;
+      const startedAt = this.clock - p.moveT;
+      for (const o of this.players) {
+        if (o.team === p.team || o.guardT <= 0 || o.down || o.guardStart > startedAt + CHECK_PREPLANT_GRACE) continue;
+        if (dist(o.pos, p.pos) <= o.stuffRange()) o.guardT = Math.max(o.guardT, p.tellDur - p.moveT + 0.05);
+      }
+    }
+
     // A juke's tell ends → apply its effect (if it wasn't parried away).
     for (const p of this.players) {
       if (p.move && !p.moveResolved && p.moveT >= p.tellDur) {
@@ -412,12 +452,94 @@ export class GameScene extends Phaser.Scene {
 
     // 4. Puck: physics, pickups, goalie saves, body separation.
     this.puck.update(dt);
+    this.puckHist.push({ t: this.clock, pos: v(this.puck.pos.x, this.puck.pos.y) });
+    while (this.puckHist.length > 2 && this.puckHist[0].t < this.clock - 0.8) this.puckHist.shift();
     this.tryPickup();
     this.goalieSaves();
     this.applyGuards();
     this.separate();
+    this.updatePressure(dt);
+    this.drawPressure();
 
     if (this.puck.scoredBy !== null) this.onGoal(this.puck.scoredBy);
+  }
+
+  /** Where the puck was `lag` seconds ago (goalies position off this, so a fast sidestep catches them leaning). */
+  private puckAt(lag: number): Vec2 {
+    const want = this.clock - lag;
+    for (let i = this.puckHist.length - 1; i >= 0; i--) if (this.puckHist[i].t <= want) return this.puckHist[i].pos;
+    return this.puckHist[0]?.pos ?? this.puck.pos;
+  }
+
+  private goalieOf(team: 0 | 1): Player | undefined {
+    return this.players.find((p) => p.team === team && p.isGoalie);
+  }
+
+  /**
+   * Possession pressure: a carrier with an opposing skater on top of them loses the puck over
+   * ~1.6s unless they do something (pass / shoot / juke reset it). Checks add to it.
+   */
+  private updatePressure(dt: number): void {
+    const carrier = this.puck.state === 'carried' ? this.puck.carriedBy : null;
+    for (const p of this.players) {
+      if (p !== carrier) {
+        p.pressure = 0;
+        p.pressers = [];
+      }
+    }
+    if (!carrier || carrier.isGoalie || carrier.down || carrier.move) {
+      if (carrier) {
+        carrier.pressure = 0;
+        carrier.pressers = [];
+      }
+      this.puck.setPressure(0);
+      return;
+    }
+    const face = v(Math.cos(carrier.facing), Math.sin(carrier.facing));
+    const near = this.players
+      .filter((o) => o.team !== carrier.team && !o.isGoalie && !o.down && o.stagger <= 0 && dist(o.pos, carrier.pos) <= PRESSURE_RANGE)
+      .sort((a, b) => dist(a.pos, carrier.pos) - dist(b.pos, carrier.pos));
+    const info: Presser[] = near.map((o) => ({ front: dot(norm(sub(o.pos, carrier.pos)), face) > -0.2 }));
+    const scaleBy = carrier.team === 0 ? this.diff.aiPressure : 1; // forgiving at low levels when the AI presses YOU
+    carrier.pressers = near;
+    carrier.pressure = stepPressure(carrier.pressure, info, carrier.stagger > 0, scaleBy, dt);
+    this.puck.setPressure(carrier.pressure);
+    if (carrier.pressure >= 1 && near.length) this.stripPuck(carrier, near[0]);
+  }
+
+  /** Pressure maxed out: the puck pops off the blade toward the presser, who gets first touch. */
+  private stripPuck(carrier: Player, presser: Player): void {
+    const dir = norm(sub(presser.pos, carrier.pos));
+    this.puck.launch(dir, PRESSURE_STRIP_SPEED, carrier);
+    carrier.pickupCooldown = Math.max(carrier.pickupCooldown, PRESSURE_LOCKOUT);
+    carrier.pressure = 0;
+    carrier.pressers = [];
+    carrier.charging = false;
+    carrier.charge = 0;
+    carrier.holdT = 0;
+    this.puck.setPressure(0);
+    this.popup('STRIPPED!', carrier.pos, '#ff6b6b', 24);
+  }
+
+  /** Contact lines from each presser to the carrier + the controlled defender's pressure ring. */
+  private drawPressure(): void {
+    const g = this.pressG;
+    g.clear();
+    const carrier = this.puck.state === 'carried' ? this.puck.carriedBy : null;
+    if (!carrier) return;
+    const pr = carrier.pressure;
+    if (pr > 0.04) {
+      for (const o of carrier.pressers) {
+        g.lineStyle(2 + 2 * pr, 0xff6b6b, 0.18 + 0.5 * pr);
+        g.lineBetween(o.pos.x, o.pos.y, carrier.pos.x, carrier.pos.y);
+      }
+    }
+    // The user DEFENDING: a faint ring showing how close you need to stay to build pressure.
+    if (this.controlled && this.controlled.team !== carrier.team && !carrier.isGoalie) {
+      const near = dist(this.controlled.pos, carrier.pos) <= PRESSURE_RANGE;
+      g.lineStyle(2, near ? 0xff6b6b : 0xffffff, near ? 0.45 : 0.14);
+      g.strokeCircle(this.controlled.pos.x, this.controlled.pos.y, PRESSURE_RANGE);
+    }
   }
 
   private tryPickup(): void {
@@ -457,6 +579,8 @@ export class GameScene extends Phaser.Scene {
     const pass = this.puck.pass;
     const viaPass = !!pass && pass.to === p && pass.from.team === p.team;
     this.puck.give(p);
+    p.pressure = 0;
+    p.pressers = [];
     p.pickupCooldown = PICKUP_DELAY;
     this.puck.lastTaker = p;
     p.receivedByPass = viaPass;
@@ -615,16 +739,25 @@ export class GameScene extends Phaser.Scene {
     const aim = shotDirection(origin, goalX, aimY);
     // Perfect shot: release with charge in the perfect window (the goalie's
     // ring/flash is the tell) → bonus power and a “!” over the shooter.
-    const perfect = !quick && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
+    // A goalie fooled by a juke can't read the next shot: it leaves as a snap shot (consumes the window).
+    const eg = this.goalieOf(from.team === 0 ? 1 : 0);
+    const fooled = !quick && !!eg && eg.fooledT > 0 && !eg.foolSpent;
+    if (fooled && eg) {
+      eg.foolSpent = true; // one shot per window…
+      eg.fooledT = Math.max(eg.fooledT, GOALIE_FOOL_TIME); // …and the goalie stays beaten until that shot has arrived
+      charge = Math.max(charge, GOALIE_FOOL_MIN_CHARGE);
+    }
+    const perfect = !quick && !fooled && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
       from.stats.shotPower * (quick ? ONE_TIMER_MULT : perfect ? PERFECT_SHOT_MULT : 1);
     this.puck.launch(aim, speed, from);
-    this.puck.quick = quick;
+    this.puck.quick = quick || fooled; // the goalie reads it late either way
     from.stickSwing = 0.3;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.15);
     if (perfect) this.popup('!', from.pos, '#ffffff');
     if (quick) this.popup('ONE-TIMER!', from.pos, '#7bdff2', 24);
+    if (fooled) this.popup('SNAP SHOT!', from.pos, '#ffd60a', 24);
   }
 
   // ---------- juke moves & defense (parry layer) ----------
@@ -679,8 +812,9 @@ export class GameScene extends Phaser.Scene {
    */
   private doCheck(d: Player): void {
     if (d.checkCd > 0 || d.stagger > 0 || d.guardT > 0 || d.down) return;
-    d.checkCd = CHECK_COOLDOWN;
+    d.checkCd = CHECK_COOLDOWN_BASE - CHECK_COOLDOWN_PER_DEF * d.stats.checkPower; // big checkers re-check sooner
     d.guardT = CHECK_TIME;
+    d.guardStart = this.clock; // a juke is only stuffed by a check that was already up when its tell began
     d.stickSwing = 0.3;
     d.vel = scale(d.vel, 0.3); // plant
     d.checkHit.clear();
@@ -704,8 +838,12 @@ export class GameScene extends Phaser.Scene {
     const impact = clamp(0.6 + closing / 300, 0.6, 1.5);
     const mult = g.team === 1 ? this.diff.aiCheckDamage : 1;
     const dmg = (CHECK_DAMAGE_BASE + CHECK_DAMAGE_PER_DEF * g.stats.checkPower) * impact * mult;
-    o.vel = scale(n, CHECK_KNOCK * impact);
-    o.stagger = Math.max(o.stagger, CHECK_HIT_STAGGER * impact);
+    // A BUMP (not a throw): stops the carrier's progress and stuns them, but leaves them in
+    // pressure range — and adds pressure, so a clean check on a walker leads to a strip.
+    const cp = g.stats.checkPower;
+    o.vel = scale(n, (CHECK_BUMP_BASE + CHECK_BUMP_PER_DEF * cp) * impact * (0.5 + 0.5 * mult));
+    o.stagger = Math.max(o.stagger, (CHECK_STAGGER_BASE + CHECK_STAGGER_PER_DEF * cp) * impact * mult);
+    if (o.carrying) o.pressure = Math.min(0.95, o.pressure + (CHECK_PRESSURE_BASE + CHECK_PRESSURE_PER_DEF * cp) * impact * mult);
     o.tumble = TUMBLE_TIME * 0.6;
     o.guardT = 0;
     o.charging = false;
@@ -754,9 +892,13 @@ export class GameScene extends Phaser.Scene {
     // it after tell+effect) — that's what drives the spin's 2π rotation.
     const def = MOVE_DEFS[id];
 
-    const blocker = this.players.find(
-      (o) => o.team !== p.team && o.guardT > 0 && !o.down && dist(o.pos, p.pos) <= o.stuffRange(),
-    );
+    // A check only STUFFS the move if it was already planted when the tell began (a wall you
+    // can't juke into). One thrown in reaction is too late: it just roots the defender (and the
+    // dash below knocks them aside) — that is how a baited check gets punished.
+    const startedAt = this.clock - p.moveT;
+    const inReach = (o: Player) => o.team !== p.team && o.guardT > 0 && !o.down && dist(o.pos, p.pos) <= o.stuffRange();
+    const blocker = this.players.find((o) => inReach(o) && o.guardStart <= startedAt + CHECK_PREPLANT_GRACE);
+    if (!blocker && this.players.some(inReach)) this.popup('SLIPPED PAST', p.pos, '#ffd166', 20);
     if (blocker) {
       p.vel = scale(p.vel, 0.15);
       p.stagger = Math.max(p.stagger, STUFF_STAGGER_BASE + STUFF_STAGGER_PER_DEF * blocker.stats.checkPower);
@@ -774,7 +916,26 @@ export class GameScene extends Phaser.Scene {
       const inp = this.controls.direction();
       if (inp.x || inp.y) aimDir = inp;
     }
-    p.dashAim = Math.atan2(aimDir.y, aimDir.x);
+    // The Deke is a SIDESTEP measured from your travel when it started (the stick picked the side).
+    p.dashAim = id === 'deke' ? p.moveBase : Math.atan2(aimDir.y, aimDir.x);
+
+    // The enemy goalie's answer to this move (rolled when the tell started — see stepGoalie).
+    const eg = this.goalieOf(p.team === 0 ? 1 : 0);
+    const plan = eg?.goaliePlan;
+    const answered = !!eg && !eg.down && plan?.owner === p && plan.seq === p.moveSeq && dist(p.pos, eg.pos) <= GOALIE_FOOL_RANGE + 40;
+    if (eg && plan && answered && plan.stance === 'read') {
+      if (dist(p.pos, eg.pos) <= GOALIE_POKE_RANGE && this.puck.carriedBy === p) {
+        // Point blank into a goalie who saw it coming: smothered.
+        p.vel = scale(p.vel, 0.15);
+        p.stagger = Math.max(p.stagger, 0.35);
+        p.tumble = TUMBLE_TIME;
+        p.move = null;
+        this.grantPuck(eg);
+        this.popup('SMOTHERED!', eg.pos, '#9ad1ff', 24);
+        return;
+      }
+      this.popup('READ', eg.pos, '#c9d1d9', 18);
+    }
     const h0 = dashHeading(def, p.dashAim, p.moveSide, 0);
     const dir = v(Math.cos(h0), Math.sin(h0));
     p.facing = h0;
@@ -783,6 +944,18 @@ export class GameScene extends Phaser.Scene {
     p.dashSpeed = def.dash * p.stats.skill;
     p.vel = scale(dir, dashSpeedAt(p.dashSpeed, 0));
     this.launchFx(p, id);
+    if (eg && plan && answered && plan.stance === 'bite') {
+      const side = lateralSignY(def, p.dashAim, p.moveSide);
+      if (side !== 0) {
+        // FOOLED: it went for the fake. Slow, late to read, and your next shot is a snap shot.
+        eg.fooledT = GOALIE_FOOL_TIME;
+        eg.foolSpent = false;
+        eg.openSign = side;
+        eg.respect = respectAfterFool(eg.respect);
+        eg.lastFooled = id;
+        this.popup('FOOLED!', eg.pos, '#ffd60a', 22);
+      }
+    }
     // Knock nearby defenders back (biased behind the carrier's travel) and stun them.
     for (const o of this.players) {
       if (o.team === p.team || o.isGoalie || o.down) continue;
@@ -800,7 +973,7 @@ export class GameScene extends Phaser.Scene {
    * Afterimages while a landed move's dash plays out — a different look per move
    * so you can tell them apart even after the tell is over:
    *   Spin → expanding ripple rings (it's a swirl);  Deke → straight speed
-   *   streaks + diamond ghosts (it's a sharp cut).
+   *   streaks + diamond ghosts along its zig-zag (it's a quick sidestep).
    */
   private trail(p: Player): void {
     if (!p.move || !p.dashDir) return;
@@ -948,7 +1121,16 @@ export class GameScene extends Phaser.Scene {
       p.sinceReceive = 99;
       p.goalieReactAt = null;
       p.dashDir = null;
+      p.pressure = 0;
+      p.pressers = [];
+      p.fooledT = 0;
+      p.foolSpent = false;
+      p.respect = 0;
+      p.lastFooled = null;
+      p.goaliePlan = { owner: null, seq: -1, stance: 'hold' };
+      p.guardStart = -99;
     }
+    this.puckHist = [];
     this.oneTimerArmed = null;
     this.puck.reset(CENTER_X, CENTER_Y);
     this.manualPick = null;

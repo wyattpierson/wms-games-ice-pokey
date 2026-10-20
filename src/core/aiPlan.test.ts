@@ -3,7 +3,7 @@ import { difficultyAt } from '../config/difficulty';
 import { planAiResponse } from './aiPlan';
 import { ALL_MOVES, MOVE_DEFS, parryTiming, type MoveId } from './moves';
 import { deriveStats } from './stats';
-import { CHECK_TIME } from '../config/gameplay';
+import { CHECK_PREPLANT_GRACE, CHECK_TIME } from '../config/gameplay';
 
 /** Seeded RNG so the simulation is deterministic. */
 function mulberry(seed: number) {
@@ -27,8 +27,8 @@ function outcomes(level: number, move: MoveId, spd: number, n = 20000) {
     const plan = planAiResponse({ moveId: move, moves: ALL_MOVES, tell, windowFrac: stats.parryFrac, diff, puckSense: stats.puckSense, rng });
     if (plan.kind === 'none') r.none++;
     else if (plan.kind === 'guard') {
-      // a check only stuffs the move if it is up when the move resolves at `tell`
-      if (plan.at <= tell && plan.at + CHECK_TIME >= tell) r.guard++;
+      // a check only stuffs the move if it was planted when the tell BEGAN (within the grace) and is still up at `tell`
+      if (plan.at <= CHECK_PREPLANT_GRACE && plan.at + CHECK_TIME >= tell) r.guard++;
     }
     else if (plan.at > tell + effect) r.tooSlow++; // press would land after the move is over: nothing happens
     else {

@@ -1,13 +1,14 @@
 import type Phaser from 'phaser';
 import { ACTION_KEYS } from '../../config/bindings';
 import {
-  CHECK_SLOW, GOALIE_RADIUS, HP_REGEN_RATE, MOVE_COOLDOWN,
+  CARRY_SPEED_FACTOR, CHECK_SLOW, GOALIE_RADIUS, GOALIE_RESPECT_DECAY, HP_REGEN_RATE, MOVE_COOLDOWN,
   PARRY_CONE_HALF, PARRY_RANGE, PERFECT_SHOT_CHARGE, PLAYER_RADIUS, TUMBLE_TIME, WHIFF_TIME,
 } from '../../config/gameplay';
 import type { AIPlan } from '../../core/aiPlan';
 import { ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
 import { clamp, len, v, type Vec2 } from '../../core/vec2';
 import { dashHeading, dashSpeedAt, MOVE_DEFS, sideAwayFrom, type MoveId } from '../../core/moves';
+import type { GoalieStance } from '../../core/goalie';
 import { guardRadiusFor, stuffRangeFor } from '../../core/stats';
 import type { HockeyStats } from '../../core/stats';
 
@@ -118,6 +119,18 @@ export class Player {
   dashAim = 0; // the aim angle the dash heading is measured from
   dashSpeed = 0; // px/s at the start of the dash (already × skill)
   moveSide: 1 | -1 = 1; // which way this move goes (away from the nearest defender, picked at tell start)
+  moveBase = 0; // heading (rad) when the move started: the Deke sidesteps relative to THIS, not to where the stick points at the end
+  guardStart = -99; // scene clock when the current check stance was planted (a late check can't stuff a juke)
+  // Possession pressure (see core/pressure.ts): fills while defenders crowd the carrier; 1 = stripped.
+  pressure = 0;
+  pressers: Player[] = []; // who is pressing this carrier right now (drawn as contact lines)
+  // Goalie vs skill moves (see core/goalie.ts) — only meaningful on goalies.
+  goaliePlan: { owner: Player | null; seq: number; stance: GoalieStance } = { owner: null, seq: -1, stance: 'hold' };
+  respect = 0; // how much this goalie respects the carrier right now (decays)
+  lastFooled: MoveId | null = null;
+  fooledT = 0; // >0: fooled by a landed move — slow, late, and the next shot is a snap shot
+  foolSpent = false; // the fooled window has been used by a shot
+  openSign: -1 | 0 | 1 = 0; // screen-y side the fooling move cut toward (the OPEN side)
   speedScale = 1; // AI speed multiplier (difficulty / teammate factor); ignored for the controlled player
   // Whiff / knockback tumble (visual + brief stagger)
   stagger = 0;
@@ -224,6 +237,7 @@ export class Player {
   startMove(id: MoveId, tellScale = 1, threat: Vec2 | null = null): boolean {
     if (!this.canStartMove()) return false;
     this.moveSide = sideAwayFrom(this.facing, this.pos, threat);
+    this.moveBase = this.facing;
     this.move = id;
     this.moveT = 0;
     this.moveResolved = false;
@@ -299,7 +313,8 @@ export class Player {
     if (this.stagger > 0 || this.down) return; // staggered: can't steer
     const planted = this.guardT > 0 ? CHECK_SLOW : 1;
     const aiScale = this.controlled ? 1 : this.speedScale;
-    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale;
+    const carry = this.carrying && !this.isGoalie ? CARRY_SPEED_FACTOR : 1; // the puck slows you a little
+    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale * carry;
     const tx = dir.x * speed;
     const ty = dir.y * speed;
     const t = Math.min(1, dt * 11);
@@ -328,6 +343,10 @@ export class Player {
     this.guardT = Math.max(0, this.guardT - dt);
     this.cueBurst = Math.max(0, this.cueBurst - dt);
     this.sinceReceive += dt;
+    this.fooledT = Math.max(0, this.fooledT - dt);
+    if (this.fooledT <= 0) this.foolSpent = false;
+    this.respect = Math.max(0, this.respect - GOALIE_RESPECT_DECAY * dt);
+    if (this.respect <= 0) this.lastFooled = null;
     if (this.down) {
       this.downTimer -= dt;
       if (this.downTimer <= 0) {
@@ -389,9 +408,10 @@ export class Player {
       const ph = Math.min(1, (this.moveT - this.tellDur) / this.effectDur);
       this.container.rotation = Math.PI * 2 * (1 - Math.pow(1 - ph, 2.2));
     } else if (this.dashing && this.move === 'deke' && this.dashDir) {
-      // Deke: a sharp lean into the cut, snapping back upright.
+      // Deke: the body leans into each leg of the zig-zag, flipping with the weave.
       const ph = Math.min(1, (this.moveT - this.tellDur) / this.effectDur);
-      this.container.rotation = Math.sin(ph * Math.PI) * 0.32 * (this.dashDir.x >= 0 ? 1 : -1);
+      const cycles = MOVE_DEFS.deke.zigCycles ?? 1;
+      this.container.rotation = Math.sin(ph * Math.PI * 2 * cycles) * 0.32 * this.moveSide;
     } else {
       this.container.rotation = 0;
     }
@@ -403,8 +423,12 @@ export class Player {
       this.img.y = -2 - (sp > 24 ? Math.abs(Math.sin(this.bobT * 0.09)) * 3 : 0);
       // Deke wind-up: the body sways side to side, growing as the cut nears.
       const dekeTell = this.move === 'deke' && this.moveT < this.tellDur;
-      // …and leans toward the FAKE side (the opposite of where the cut will go).
-      this.img.x = dekeTell ? Math.sin(this.moveT * 24) * 4 * (this.moveT / this.tellDur) - this.moveSide * 9 * (this.moveT / this.tellDur) : 0;
+      // …and leans toward the FAKE side: the opposite of where the sidestep will go (perpendicular to travel).
+      const prog = dekeTell ? this.moveT / this.tellDur : 0;
+      const fx = Math.sin(this.moveBase) * this.moveSide; // fake direction = −(sidestep direction)
+      const fy = -Math.cos(this.moveBase) * this.moveSide;
+      this.img.x = dekeTell ? Math.sin(this.moveT * 24) * 4 * prog + fx * 9 * prog : 0;
+      this.img.y += dekeTell ? fy * 9 * prog : 0;
     }
 
     this.draw();
@@ -515,6 +539,21 @@ export class Player {
       g.fillTriangle(0, ay, -8, ay + 10, 8, ay + 10);
       g.lineStyle(2, 0xffe066, 0.9);
       g.strokeCircle(0, 2, r + 4);
+    }
+
+    // Possession pressure: a ring that fills clockwise (orange → red) and flickers near the strip.
+    if (this.carrying && this.pressure > 0.03) {
+      const pr = Math.min(1, this.pressure);
+      const hot = pr > 0.7;
+      const flick = hot ? 0.6 + 0.4 * Math.sin(this.t * 34) : 1;
+      g.lineStyle(5, 0x000000, 0.35 * flick);
+      g.beginPath();
+      g.arc(0, 2, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pr, false);
+      g.strokePath();
+      g.lineStyle(3, pr < 0.55 ? 0xffa94d : 0xff4d4d, (0.55 + 0.4 * pr) * flick);
+      g.beginPath();
+      g.arc(0, 2, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pr, false);
+      g.strokePath();
     }
 
     // Body.

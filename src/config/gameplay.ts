@@ -96,16 +96,24 @@ export const CHARGE_SKATE = 0.6; // speed factor for left/right skating while ch
 // and becomes a wall: opponents can't push through, and a juke that resolves
 // inside the wall is stuffed (burst cancelled, carrier staggered, puck kept).
 export const CHECK_TIME = 0.55; // s the stance lasts
-export const CHECK_COOLDOWN = 1.1; // s before the next check
+export const CHECK_COOLDOWN_BASE = 1.05; // s before the next check at 0 Defense…
+export const CHECK_COOLDOWN_PER_DEF = 0.3; // …minus this × normalised Defense (a big checker can check again sooner)
 export const CHECK_SLOW = 0.2; // speed factor while planted
 // A check also HITS: an opponent who runs into the planted wall (or is within reach
 // when the check is pressed) and isn't mid-move gets knocked back, stunned and damaged.
 export const CHECK_HIT_REACH = 14; // px beyond the wall radius that a freshly-pressed check strikes
 export const CHECK_RUNIN_MIN = 40; // px/s of closing speed that counts as "running into" the wall
-export const CHECK_KNOCK = 300; // px/s knock-back (× impact)
-export const CHECK_HIT_STAGGER = 0.28; // s stun (× impact)
-export const CHECK_DAMAGE_BASE = 10; // HP at 0 Defense…
-export const CHECK_DAMAGE_PER_DEF = 16; // …+ this × normalised Defense; × impact (0.6–1.5 by closing speed)
+// A check BUMPS: it stops the carrier's progress and sets them back a body or so, but NOT out of
+// pressure range (skater friction is exp(-7t), so a bump of v px/s moves them ≈ v/7 px).
+export const CHECK_BUMP_BASE = 110; // px/s bump at 0 Defense (× impact)…
+export const CHECK_BUMP_PER_DEF = 90; // …+ this × normalised Defense
+export const CHECK_PRESSURE_BASE = 0.28; // possession-pressure a landed check adds at 0 Defense (× impact)…
+export const CHECK_PRESSURE_PER_DEF = 0.32; // …+ this × normalised Defense
+export const CHECK_PREPLANT_GRACE = 0.1; // s: a check only STUFFS a juke if it was planted before the tell began (±this)
+export const CHECK_STAGGER_BASE = 0.3; // s stun at 0 Defense (× impact)…
+export const CHECK_STAGGER_PER_DEF = 0.25; // …+ this × normalised Defense
+export const CHECK_DAMAGE_BASE = 12; // HP at 0 Defense…
+export const CHECK_DAMAGE_PER_DEF = 22; // …+ this × normalised Defense; × impact (0.6–1.5 by closing speed)
 export const HP_REGEN_DELAY = 3; // s without damage before HP starts to come back
 export const HP_REGEN_RATE = 3; // HP per second once it does
 export const CHECK_RADIUS_BASE = 30; // wall radius at 0 Defense…
@@ -113,3 +121,43 @@ export const CHECK_RADIUS_PER_DEF = 14; // …+ this × normalised Defense
 export const CHECK_STUFF_REACH = 32; // a juke resolving within wall radius + this is stuffed (≥ PARRY_RANGE even at 0 Defense)
 export const STUFF_STAGGER_BASE = 0.25; // s the stuffed carrier is stunned…
 export const STUFF_STAGGER_PER_DEF = 0.3; // …+ this × normalised Defense
+
+// ---------------------------------------------------------------------------
+// Carrying the puck is a little slower than skating without it.
+export const CARRY_SPEED_FACTOR = 0.9;
+
+// Possession PRESSURE. A carrier who just skates with a defender on top of them
+// slowly loses the puck: the meter fills while an opposing skater is within
+// PRESSURE_RANGE, drains when nobody is, and resets on a pass / shot / juke.
+// At 1.0 the puck is stripped loose toward the presser. A check adds to it.
+export const PRESSURE_RANGE = 58; // px (centre to centre) at which a skater counts as pressing
+export const PRESSURE_FILL_TIME = 1.6; // s one in-front presser needs to strip a standing carrier
+export const PRESSURE_BEHIND_RATE = 0.5; // a presser BEHIND the carrier counts this much
+export const PRESSURE_SECOND_PRESSER = 0.6; // each extra presser adds this × their own weight
+export const PRESSURE_STAGGER_RATE = 1.5; // a stunned carrier is stripped this much faster
+export const PRESSURE_DECAY = 1.5; // meter units / s when nobody is pressing
+export const PRESSURE_LOCKOUT = 0.45; // s the stripped carrier can't re-grab (the presser gets first touch)
+export const PRESSURE_STRIP_SPEED = 170; // px/s the puck pops toward the presser
+
+// Goalies are part of the juke game too. A move started within GOALIE_FOOL_RANGE of the
+// enemy goalie makes it roll a response once (core/goalie.ts):
+//   READ  – it sees it coming. No bonus for you; if you land it within GOALIE_POKE_RANGE it SMOTHERS the puck.
+//   BITE  – it commits to the fake side (GOALIE_BITE_OFFSET px off-centre, ignoring where the puck is). If the move lands, the goalie is
+//           FOOLED for GOALIE_FOOL_TIME: slow, late to read a shot, and your next shot is a
+//           snap shot (consumes the window). Open net on the side you cut to.
+//   HOLD  – it just keeps tracking (with a little positioning lag).
+// Every fool makes that goalie respect you more for a few seconds (more READs, esp. the same move).
+export const GOALIE_FOOL_RANGE = 270;
+export const GOALIE_POKE_RANGE = 70;
+export const GOALIE_BITE_OFFSET = 40; // px from the CENTRE of the net the goalie commits to on the fake side (leaves the far corner open: net half-width is 60, save radius 34)
+export const GOALIE_FOOL_TIME = 0.7;
+export const GOALIE_FOOL_SPEED = 0.3; // goalie skating factor while fooled
+export const GOALIE_FOOL_MIN_CHARGE = 0.8; // a tap during the window still leaves with this much charge (snap shot)
+export const GOALIE_RESPECT_GAIN = 0.18;
+export const GOALIE_RESPECT_MAX = 0.5;
+export const GOALIE_RESPECT_DECAY = 0.07; // per second (≈ 6–7 s to forget a full fool)
+export const GOALIE_REPEAT_READ = 0.15; // extra read chance for the SAME move that fooled it last
+// The user's own goalie plays at a fixed, middling level (difficulty is about the OPPONENT's skill).
+export const FRIENDLY_GOALIE_READ = 0.38;
+export const FRIENDLY_GOALIE_BITE = 0.5;
+export const FRIENDLY_GOALIE_LAG = 0.12;
