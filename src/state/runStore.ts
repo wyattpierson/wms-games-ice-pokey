@@ -82,3 +82,11 @@ export function takeNotice(): string | null {
   notice = null;
   return message;
 }
+
+/** Remove the active run save and clear the in-memory run state. */
+export function clearRunSave(): void {
+  state = newRun();
+  runExists = false;
+  notice = null;
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage may be unavailable */ }
+}

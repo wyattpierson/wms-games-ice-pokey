@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from './config/rink';
-import { CAMPAIGN_TEAMS, USER_TEAM } from './config/teams';
+import { ALL_TEAMS, USER_TEAM } from './config/teams';
 import { GameScene } from './scenes/GameScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { OpponentSelectScene } from './scenes/OpponentSelectScene';
@@ -8,6 +8,13 @@ import { PoachScene } from './scenes/PoachScene';
 import { ResultScene } from './scenes/ResultScene';
 import { TitleScene } from './scenes/TitleScene';
 import { VictoryScene } from './scenes/VictoryScene';
+import { StarterSelectScene } from './scenes/StarterSelectScene';
+import { ZoneSelectScene } from './scenes/ZoneSelectScene';
+import { StoreScene } from './scenes/StoreScene';
+import { LineupScene } from './scenes/LineupScene';
+import { BattleTowerScene } from './scenes/BattleTowerScene';
+import { DialogueScene } from './scenes/DialogueScene';
+import { BalanceLabScene } from './scenes/BalanceLabScene';
 
 // Dev deep-link: ?renderer=canvas forces the canvas renderer (for pixel tests).
 const params = new URLSearchParams(window.location.search);
@@ -29,13 +36,15 @@ class Preloader extends Phaser.Scene {
   // before create(). Queuing in create() sits in the queue forever and the
   // game never starts (this was the blank-screen bug).
   preload(): void {
+    // Illustrated 16-bit archipelago artwork used by the actual overworld.
+    this.load.image('overworld-regions', new URL('./assets/overworld-regions.png', import.meta.url).href);
     // Every roster the campaign can ever show: the starting team plus all
     // campaign teams (poached players always have a sprite loaded).
     const seen = new Set<number>();
-    for (const t of [USER_TEAM, ...CAMPAIGN_TEAMS]) {
+    for (const t of [USER_TEAM, ...ALL_TEAMS]) {
       for (const p of t.players) seen.add(p.sprite);
     }
-    for (const id of seen) {
+    for (const id of [246, 247, 248, 443, 444, 445, 371, 372, 373, ...seen]) {
       this.load.image(
         `pkm-${id}`,
         `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`,
@@ -66,12 +75,20 @@ const game = new Phaser.Game({
   parent: 'game',
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
-  backgroundColor: '#0b0f16',
+  backgroundColor: '#091522',
   pixelArt: true,
+  render: { roundPixels: true, antialias: false },
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   scene: [
     Preloader,
     TitleScene,
+    StarterSelectScene,
+    DialogueScene,
+    BalanceLabScene,
+    ZoneSelectScene,
+    StoreScene,
+    LineupScene,
+    BattleTowerScene,
     OpponentSelectScene,
     GameScene,
     ResultScene,

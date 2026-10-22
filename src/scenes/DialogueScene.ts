@@ -1,0 +1,17 @@
+import Phaser from 'phaser';
+import { addRetroChrome } from '../ui/chrome';
+import { GAME_HEIGHT, GAME_WIDTH } from '../config/rink';
+import { getMeta, setStoryFlag } from '../state/metaStore';
+import { FILL, FONT, THEME, hex } from '../ui/theme';
+import { wireShutdown } from '../ui/sceneLifecycle';
+import type { StarterId } from '../state/metaStore';
+const STARTERS: Record<StarterId,{name:string;sprite:number}>={larvitar:{name:'Larvitar',sprite:246},gible:{name:'Gible',sprite:443},bagon:{name:'Bagon',sprite:371}};
+export interface DialogueLine { speaker: string; text: string }
+export class DialogueScene extends Phaser.Scene {
+ private nextScene='ZoneSelectScene'; private lines:DialogueLine[]=[]; private index=0; private onKey:((e:KeyboardEvent)=>void)|null=null; private flag?:string;
+ constructor(){super('DialogueScene');}
+ init(data:{nextScene?:string;lines?:DialogueLine[];flag?:string}):void {this.nextScene=data?.nextScene||'ZoneSelectScene';this.lines=data?.lines||[];this.index=0;this.flag=data?.flag;}
+ create():void {wireShutdown(this);this.cameras.main.setBackgroundColor(0x07111e);const meta=getMeta();const starter=meta.starter||'larvitar';const other=(Object.keys(STARTERS) as StarterId[]).find(id=>id!==starter)||'gible';if(!this.lines.length){this.lines=[{speaker:STARTERS[starter].name,text:'So… this is the league everyone keeps talking about?'},{speaker:STARTERS[other].name,text:'You really think you can make it all the way to the top?'},{speaker:STARTERS[starter].name,text:'I don’t know. But I’m not doing it alone.'}];}
+ const g=this.add.graphics();g.fillStyle(FILL.background,1);g.fillRect(0,0,GAME_WIDTH,GAME_HEIGHT);addRetroChrome(this,THEME.GOLD);this.add.text(GAME_WIDTH/2,48,'BEFORE THE FIRST PUCK DROP',{fontFamily:FONT,fontSize:'22px',color:hex(THEME.GOLD)}).setOrigin(.5);this.add.image(360,260,`pkm-${STARTERS[starter].sprite}`).setScale(1.7);this.add.image(825,260,`pkm-${STARTERS[other].sprite}`).setScale(1.7);this.add.text(360,340,STARTERS[starter].name.toUpperCase(),{fontFamily:FONT,fontSize:'16px',color:hex(THEME.GREEN)}).setOrigin(.5);this.add.text(825,340,STARTERS[other].name.toUpperCase(),{fontFamily:FONT,fontSize:'16px',color:hex(THEME.BLUE)}).setOrigin(.5);this.add.rectangle(GAME_WIDTH/2,500,880,150,FILL.panel,1).setStrokeStyle(2,THEME.GOLD);this.add.text(GAME_WIDTH/2,450,'DIALOGUE',{fontFamily:FONT,fontSize:'12px',color:hex(THEME.DIM)}).setOrigin(.5);const speaker=this.add.text(190,480,'',{fontFamily:FONT,fontSize:'17px',color:hex(THEME.GOLD)});const body=this.add.text(190,515,'',{fontFamily:FONT,fontSize:'16px',color:hex(THEME.WHITE),wordWrap:{width:800},lineSpacing:8});const progress=this.add.text(GAME_WIDTH/2,635,'ENTER / CLICK TO CONTINUE',{fontFamily:FONT,fontSize:'12px',color:hex(THEME.DIM)}).setOrigin(.5);const render=()=>{const line=this.lines[this.index];speaker.setText(line?.speaker||'');body.setText(line?.text||'');progress.setText(`${this.index+1} / ${this.lines.length}   ·   ENTER / CLICK TO CONTINUE`);};const advance=()=>{if(this.index<this.lines.length-1){this.index++;render();}else{if(this.flag)setStoryFlag(this.flag);this.scene.start(this.nextScene);}};this.input.on('pointerdown',advance);const onKey=(e:KeyboardEvent)=>{if(e.code==='Enter'||e.code==='Space'){e.preventDefault();advance();}};this.onKey=onKey;window.addEventListener('keydown',onKey);render();}
+ shutdown():void{if(this.onKey)window.removeEventListener('keydown',this.onKey);this.onKey=null;}
+}

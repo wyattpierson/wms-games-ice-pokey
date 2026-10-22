@@ -13,8 +13,10 @@
  * State is immutable: every transition returns a NEW CampaignState.
  */
 import { BASE_LEVEL, CHAMPION_LEVEL, LEVEL_PER_WIN } from '../config/campaign';
-import { CAMPAIGN_TEAMS, CHAMPION_TEAM, USER_TEAM, type PlayerDef, type Team } from '../config/teams';
+import { ALL_TEAMS, CAMPAIGN_TEAMS, CHAMPION_TEAM, USER_TEAM, type PlayerDef, type Team } from '../config/teams';
+import { STARTER_EVOLUTIONS, TOWER_STAGES, ZONES } from '../config/progression';
 import type { BaseStats } from './stats';
+import { getMeta } from '../state/metaStore';
 
 /** How a match against a given team ended (no ties: first to 3 goals). */
 export type MatchOutcome = 'win' | 'loss';
@@ -33,6 +35,8 @@ export interface Poach {
 export interface CampaignState {
   /** The player's current roster (cloned — never the original USER_TEAM). */
   userTeam: Team;
+  /** Recruited players not currently in the four-player match lineup. */
+  bench: PlayerDef[];
   /** Teams already faced this run: teamId -> outcome. */
   results: Record<string, MatchOutcome>;
   poaches: Poach[];
@@ -61,17 +65,29 @@ export function cloneTeam(t: Team): Team {
 
 /** A fresh run: the starting roster, no results. */
 export function newRun(): CampaignState {
-  return { userTeam: cloneTeam(USER_TEAM), results: {}, poaches: [], gameOver: false, victory: false };
+  const team = cloneTeam(USER_TEAM);
+  const starter = getMeta().starter;
+  const starterDefs = STARTER_EVOLUTIONS;
+  const xp = starter ? getMeta().starterXp[starter] : 0;
+  const stages = starter ? starterDefs[starter] : undefined;
+  if (starter && stages) { const stage = [...stages].reverse().find(x => xp >= x.at)!; team.players[2] = { name: stage.name, sprite: stage.sprite, isStarter: true, stats: { ...stage.stats, hp: stage.stats.hp + getMeta().starterBonusHp } }; }
+  return { userTeam: team, bench: [], results: {}, poaches: [], gameOver: false, victory: false };
 }
 
+
 export function teamById(id: string): Team {
-  const team = CAMPAIGN_TEAMS.find((t) => t.id === id);
+  const team = ALL_TEAMS.find((t) => t.id === id);
   if (!team) throw new Error(`Unknown team: ${id}`);
   return team;
 }
 
 export function isChampion(teamId: string): boolean {
   return teamId === CHAMPION_TEAM.id;
+}
+
+/** Island bosses are challenging milestones but do not end the whole run. */
+export function isIslandBoss(teamId: string): boolean {
+  return teamById(teamId).role === 'boss';
 }
 
 /** How many matches the player has won this run. */
@@ -93,7 +109,12 @@ export function recordResult(state: CampaignState, teamId: string, outcome: Matc
 
 /** Mark a match as started (so abandoning it later can be detected). */
 export function startMatch(state: CampaignState, teamId: string): CampaignState {
-  if (!availableOpponents(state).some((t) => t.id === teamId)) throw new Error(`Team ${teamId} is not available`);
+  const isLegacyAvailable = availableOpponents(state).some((t) => t.id === teamId);
+  const zone = ZONES.find((z) => z.id === getMeta().selectedZoneId);
+  const islandTeamIds = zone ? [...zone.opponents, zone.bossId] : [];
+  const isSelectedIslandAvailable = islandTeamIds.includes(teamId) && !state.results[teamId] && !state.gameOver && !state.victory;
+  const isTournamentStageAvailable = getMeta().daysRemaining <= 0 && TOWER_STAGES.some(stage => stage.opponentId === teamId) && !state.gameOver && !state.victory;
+  if (!isLegacyAvailable && !isSelectedIslandAvailable && !isTournamentStageAvailable) throw new Error(`Team ${teamId} is not available`);
   return { ...state, matchInProgress: teamId };
 }
 
@@ -160,6 +181,24 @@ export function applyPoach(
     poaches: [...state.poaches, { fromTeamId, side, taken: taken.name, dropped: dropped.name }],
     pendingPoach: undefined,
   };
+}
+
+/** Apply permanent starter XP/evolution to whichever roster slot currently holds them. */
+export function syncStarterEvolution(state: CampaignState): CampaignState {
+  const meta = getMeta(); if (!meta.starter) return state;
+  const stages = STARTER_EVOLUTIONS[meta.starter];
+  const stage = [...stages].reverse().find(s => meta.starter && meta.starterXp[meta.starter] >= s.at)!;
+  const evolve = (p: PlayerDef): PlayerDef => p.isStarter ? {...p,name:stage.name,sprite:stage.sprite,stats:{...stage.stats,hp:stage.stats.hp+meta.starterBonusHp}} : p;
+  return {...state,userTeam:{...state.userTeam,players:state.userTeam.players.map(evolve) as Team['players']},bench:(state.bench||[]).map(evolve)};
+}
+
+/** Add a recruited player to the bench without disturbing the active lineup. */
+export function recruitToBench(state: CampaignState, side: Side, fromTeamId: string, takenIndex: number): CampaignState {
+  if (state.results[fromTeamId] !== 'win') throw new Error('Can only recruit from a team you just beat');
+  if (isChampion(fromTeamId)) throw new Error('The champion grants no players');
+  const taken = sidePlayers(teamById(fromTeamId), side)[takenIndex];
+  if (!taken) throw new Error('Bad roster index');
+  return { ...state, bench: [...(state.bench || []), clonePlayer(taken)], poaches: [...state.poaches, { fromTeamId, side, taken: taken.name, dropped: '(sent to bench)' }], pendingPoach: undefined };
 }
 
 /**

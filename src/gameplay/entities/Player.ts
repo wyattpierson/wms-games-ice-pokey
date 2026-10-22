@@ -135,6 +135,7 @@ export class Player {
   foolSpent = false; // the fooled window has been used by a shot
   openSign: -1 | 0 | 1 = 0; // screen-y side the fooling move cut toward (the OPEN side)
   speedScale = 1; // AI speed multiplier (difficulty / teammate factor); ignored for the controlled player
+  powerSpeedScale = 1; // temporary power-system multiplier
   // Whiff / knockback tumble (visual + brief stagger)
   stagger = 0;
   tumble = 0;
@@ -324,7 +325,7 @@ export class Player {
     const planted = this.guardT > 0 ? CHECK_SLOW : 1;
     const aiScale = this.controlled ? 1 : this.speedScale;
     const carry = this.carrying && !this.isGoalie ? CARRY_SPEED_FACTOR : 1; // the puck slows you a little
-    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale * carry;
+    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale * carry * this.powerSpeedScale;
     const tx = dir.x * speed;
     const ty = dir.y * speed;
     const t = Math.min(1, dt * 11);

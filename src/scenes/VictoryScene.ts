@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
+import { addRetroChrome } from '../ui/chrome';
 import { GAME_WIDTH } from '../config/rink';
 import { getRun, resetRun } from '../state/runStore';
 import { Menu, MenuButton } from '../ui/menu';
 import { runSummaryPanel } from '../ui/RunSummary';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
+import { addRun, beginNewYear, getMeta } from '../state/metaStore';
+import { yearOpening } from '../config/story';
 
 export class VictoryScene extends Phaser.Scene {
   private menu!: Menu;
@@ -19,12 +22,13 @@ export class VictoryScene extends Phaser.Scene {
     const W = GAME_WIDTH;
     const state = getRun();
     this.cameras.main.setBackgroundColor(FILL.background);
+    addRetroChrome(this, THEME.GOLD);
 
     this.add
-      .text(W / 2, 96, 'CHAMPION!', { fontFamily: FONT, fontSize: '52px', color: hex(THEME.GOLD) })
+      .text(W / 2, 96, 'YEAR-END CHAMPION!', { fontFamily: FONT, fontSize: '52px', color: hex(THEME.GOLD) })
       .setOrigin(0.5);
     this.add
-      .text(W / 2, 142, 'Sky Raiders has fallen — the rink is yours.', {
+      .text(W / 2, 142, 'You conquered the Battle Tower. A new year awaits.', {
         fontFamily: FONT,
         fontSize: '17px',
         color: hex(THEME.DIM),
@@ -33,11 +37,14 @@ export class VictoryScene extends Phaser.Scene {
 
     runSummaryPanel(this, W / 2, 320, state);
 
-    const newRun = new MenuButton(this, W / 2, 540, 'NEW RUN →', {
+    const newRun = new MenuButton(this, W / 2, 540, 'NEXT YEAR →', {
       color: THEME.GREEN,
       onSelect: () => {
         resetRun();
-        this.scene.start('OpponentSelectScene');
+        beginNewYear();
+        addRun();
+        const intro=yearOpening(getMeta().seasonYear);
+        this.scene.start('DialogueScene',{nextScene:'ZoneSelectScene',lines:intro.lines,flag:intro.flag});
       },
     });
     const menu = new MenuButton(this, W / 2, 588, 'MAIN MENU', {

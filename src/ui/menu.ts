@@ -63,6 +63,7 @@ export class Menu {
 /** A centered text button: gold + slightly bigger when highlighted by its Menu. */
 export class MenuButton extends Phaser.GameObjects.Text implements Button {
   onSelect?: () => void;
+  private readonly baseLabel: string;
   enabled: boolean;
   color: number;
   constructor(
@@ -78,7 +79,9 @@ export class MenuButton extends Phaser.GameObjects.Text implements Button {
       color: opts?.enabled === false ? hex(THEME.DIM) : hex(opts?.color ?? THEME.WHITE),
       align: 'center',
     });
+    this.baseLabel = label;
     this.enabled = opts?.enabled ?? true;
+    this.setShadow(2, 2, '#040912', 0, false, true);
     this.color = opts?.color ?? THEME.WHITE;
     this.onSelect = opts?.onSelect;
     scene.add.existing(this);
@@ -89,13 +92,10 @@ export class MenuButton extends Phaser.GameObjects.Text implements Button {
   }
 
   highlight(on: boolean): void {
-    if (on) {
-      this.setColor(hex(THEME.GOLD));
-      this.setScale(1.06);
-    } else {
-      this.setColor(this.enabled ? hex(this.color) : hex(THEME.DIM));
-      this.setScale(1);
-    }
+    // Avoid scale animations: scaling canvas text makes the pixel-retro UI feel soft.
+    this.setText(on ? `▶ ${this.baseLabel}` : this.baseLabel);
+    this.setColor(on ? hex(THEME.GOLD) : this.enabled ? hex(this.color) : hex(THEME.DIM));
+    this.setShadow(on ? 2 : 1, on ? 2 : 1, '#040912', 0, false, true);
   }
 }
 
@@ -132,10 +132,15 @@ export class TextButton extends Phaser.GameObjects.Container {
     scene.add.existing(this);
     if (opts?.onSelect) {
       const onSelect = opts.onSelect;
-      this.setInteractive({ useHandCursor: true })
+      const w = Math.max(this.minWidth, this.labelObj.width + 28);
+      const h = this.size + 16;
+      this.setInteractive(new Phaser.Geom.Rectangle(-w / 2, -h / 2, w, h), Phaser.Geom.Rectangle.Contains)
         .on('pointerdown', () => onSelect())
-        .on('pointerover', () => this.bg.setFillStyle(FILL.plateHi, 1))
-        .on('pointerout', () => this.bg.setFillStyle(FILL.plate, 1));
+        .on('pointerover', () => { this.bg.setFillStyle(FILL.plateHi, 1); this.bg.setStrokeStyle(2, THEME.GOLD); this.labelObj.setColor(hex(THEME.GOLD)); })
+        .on('pointerout', () => { this.bg.setFillStyle(FILL.plate, 1); this.bg.setStrokeStyle(2, this.accent); this.labelObj.setColor(hex(this.accent)); });
+      if (this.input) this.input.cursor = 'pointer';
+      // Interactive containers need the same centered hitbox as their visible plate.
+      this.layout();
     }
   }
 
@@ -155,7 +160,7 @@ export class TextButton extends Phaser.GameObjects.Container {
     this.setSize(w, h);
     // Keep an existing hit area in step with the new size (containers hit-test around their center).
     const input = this.input;
-    if (input?.hitArea) (input.hitArea as Phaser.Geom.Rectangle).setTo(0, 0, w, h);
+    if (input?.hitArea) (input.hitArea as Phaser.Geom.Rectangle).setTo(-w / 2, -h / 2, w, h);
   }
 }
 

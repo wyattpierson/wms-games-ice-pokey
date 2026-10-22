@@ -8,21 +8,21 @@
 // Note: NOT `as const` — plain number fields so callers can reassign/copy colors
 // without fighting literal types.
 export const THEME: Record<'GOLD' | 'WHITE' | 'RED' | 'GREEN' | 'BLUE' | 'GRAY' | 'DIM', number> = {
-  GOLD: 0xfacc15,
-  WHITE: 0xf5f5f4,
-  RED: 0xf87171,
-  GREEN: 0x4ade80,
-  BLUE: 0x60a5fa,
-  GRAY: 0x9ca3af,
-  DIM: 0x6b7280,
+  GOLD: 0xf4c95d,
+  WHITE: 0xf4f1de,
+  RED: 0xef6b73,
+  GREEN: 0x73d2a4,
+  BLUE: 0x75bde0,
+  GRAY: 0xaab6c5,
+  DIM: 0x7d8a9a,
 };
 
 export const FILL: Record<'background' | 'plate' | 'plateHi' | 'panel' | 'goalie', number> = {
-  background: 0x0b0f16, // matches the Phaser config background
-  plate: 0x111827,
-  plateHi: 0x1b2638, // a plate under the cursor / mouse
-  panel: 0x111a24,
-  goalie: 0x241f0c, // the warm-tinted slot a goalie sits in
+  background: 0x091522, // deep rink-night blue
+  plate: 0x122236,
+  plateHi: 0x20364e, // hard-edged focus state
+  panel: 0x0e1d2d,
+  goalie: 0x2a281b, // warm-tinted goalie slot
 };
 
 export const FONT = 'monospace';

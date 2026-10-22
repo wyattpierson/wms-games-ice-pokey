@@ -1,8 +1,8 @@
 import type { BaseStats } from '../core/stats';
 
 /**
- * Team / roster data. Rosters are themed squads; stats are real Pokémon base
- * stats (the user may remap them later, same deal as pokemon-bowl's teams.ts).
+ * Team / roster data. Rosters are themed squads; stats are hand-tuned on a
+ * familiar Pokémon stat scale for hockey balance, not exact Pokédex stat dumps.
  *
  * Roster = 4 Pokémon: 3 field + 1 goalie (the `goalie: true` entry).
  * The user's team always defends left / attacks right.
@@ -18,9 +18,13 @@ export interface PlayerDef {
   sprite: number;
   goalie?: boolean;
   stats: BaseStats;
+  /** Marks the permanent campaign starter, even after evolution or benching. */
+  isStarter?: boolean;
 }
 
 export interface Team {
+  /** Role within an island or tournament. */
+  role?: 'regular' | 'boss' | 'tower';
   /** Stable id — used by the campaign state machine and save files. */
   id: string;
   name: string;
@@ -59,7 +63,7 @@ export const OPPONENTS: Team[] = [
     color: 0xef4444,
     colorDark: 0xb91c1c,
     players: [
-      { name: 'Pawmot', sprite: 923, stats: s(70, 115, 70, 70, 60, 105) },
+      { name: 'Hitmontop', sprite: 237, stats: s(60, 100, 60, 95, 110, 70) },
       { name: 'Hitmonchan', sprite: 107, stats: s(50, 105, 35, 79, 110, 76) },
       { name: 'Grapploct', sprite: 853, stats: s(80, 118, 70, 90, 80, 42) },
       { name: 'Hariyama', sprite: 297, goalie: true, stats: s(144, 120, 40, 60, 60, 50) },
@@ -73,7 +77,7 @@ export const OPPONENTS: Team[] = [
     players: [
       { name: 'Gengar', sprite: 94, stats: s(60, 65, 130, 60, 75, 110) },
       { name: 'Marowak (Alolan)', sprite: 10115, stats: s(60, 80, 50, 110, 80, 45) },
-      { name: 'Mimikyu', sprite: 778, stats: s(55, 90, 50, 80, 105, 96) },
+      { name: 'Trevenant', sprite: 709, stats: s(85, 110, 65, 76, 82, 56) },
       { name: 'Golurk', sprite: 623, goalie: true, stats: s(89, 124, 55, 80, 80, 55) },
     ],
   },
@@ -85,7 +89,7 @@ export const OPPONENTS: Team[] = [
     players: [
       { name: 'Togekiss', sprite: 468, stats: s(85, 50, 120, 95, 115, 80) },
       { name: 'Gardevoir', sprite: 282, stats: s(68, 65, 125, 65, 115, 80) },
-      { name: 'Tapu Koko', sprite: 785, stats: s(70, 115, 95, 85, 75, 130) },
+      { name: 'Electivire', sprite: 466, stats: s(80, 115, 100, 75, 80, 110) },
       { name: 'Comfey', sprite: 764, goalie: true, stats: s(51, 52, 82, 90, 110, 100) },
     ],
   },
@@ -102,12 +106,26 @@ export const CHAMPION_TEAM: Team = {
   color: 0xf59e0b,
   colorDark: 0xb45309,
   players: [
-    { name: 'Thundurus', sprite: 642, stats: s(79, 115, 125, 70, 80, 111) },
+    { name: 'Zekrom', sprite: 644, stats: s(100, 120, 120, 120, 100, 90) },
     { name: 'Articuno (Galarian)', sprite: 10169, stats: s(90, 85, 125, 85, 100, 95) },
     { name: 'Rayquaza', sprite: 384, stats: s(105, 150, 150, 90, 90, 95) },
-    { name: 'Regice', sprite: 378, goalie: true, stats: s(80, 50, 100, 100, 200, 50) },
+    { name: 'Aegislash', sprite: 681, goalie: true, stats: s(95, 90, 105, 120, 120, 65) },
   ],
 };
 
-/** Every team you can face this run: the 3 regulars + the champion. */
+/** Island rosters live in separate files so each island can be edited independently. */
+import { TEAMS_COASTAL } from './coastalTeams';
+import { TEAMS_HAUNTED } from './hauntedTeams';
+import { TEAMS_SUMMIT } from './summitTeams';
+import { TEAMS_ABYSS } from './abyssTeams';
+import { TOWER_TEAMS } from './towerTeams';
+export const ISLAND_TEAMS: Record<string, Team[]> = {
+  coastal: TEAMS_COASTAL,
+  haunted: TEAMS_HAUNTED,
+  summit: TEAMS_SUMMIT,
+  abyss: TEAMS_ABYSS,
+};
+/** Legacy opponents remain for compatibility; the year-end tower uses dedicated tuned teams. */
 export const CAMPAIGN_TEAMS: Team[] = [...OPPONENTS, CHAMPION_TEAM];
+/** All known teams, including the independently editable island rosters. */
+export const ALL_TEAMS: Team[] = [...CAMPAIGN_TEAMS, ...TEAMS_COASTAL, ...TEAMS_HAUNTED, ...TEAMS_SUMMIT, ...TEAMS_ABYSS, ...TOWER_TEAMS];

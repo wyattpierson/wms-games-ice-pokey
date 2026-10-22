@@ -42,12 +42,14 @@ await page.goto(url, { waitUntil: 'networkidle' });
 check('title scene is active', await waitForScene('TitleScene'));
 await page.waitForTimeout(300);
 
-// 2. Enter = NEW RUN → opponent select.
+// 2. Enter = NEW RUN → archipelago map.
 await page.keyboard.press('Enter');
-check('opponent select after NEW RUN', await waitForScene('OpponentSelectScene'));
+check('zone map after NEW RUN', await waitForScene('ZoneSelectScene'));
 await page.waitForTimeout(300);
 
-// 3. Digit 1 → campaign match vs the first team.
+// 3. Digit 1 visits the Coastal Circuit (60 days), then Digit 1 selects its first opponent (20 days).
+await page.keyboard.press('Digit1');
+check('opponent select after visiting island', await waitForScene('OpponentSelectScene'));
 await page.keyboard.press('Digit1');
 const inMatch = await waitForScene('GameScene');
 check('game scene after picking opponent 1', inMatch);
@@ -68,7 +70,7 @@ console.log('match:', JSON.stringify(match));
 check('match is live', match.state === 'live');
 check('match is a campaign match', match.campaign === true);
 check('8 players on the ice', match.players === 8);
-check('opponent is Knuckle Club', match.opponent === 'Knuckle Club');
+check('opponent is Boardwalk Blitz', match.opponent === 'Boardwalk Blitz');
 check('all sprites loaded', match.sprites >= 16);
 
 // 4. Play a couple of seconds with real inputs.

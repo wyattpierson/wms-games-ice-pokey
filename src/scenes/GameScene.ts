@@ -33,6 +33,9 @@ import { drawRink } from '../gameplay/entities/Rink';
 import { getRun, setRun } from '../state/runStore';
 import { PauseOverlay } from '../ui/PauseOverlay';
 import { wireShutdown } from '../ui/sceneLifecycle';
+import { POWER_DEFINITIONS, DEFAULT_CAMPAIGN_POWER_IDS } from '../config/powers';
+import { PowerRuntime, type PowerTrigger } from '../core/powers';
+import type { BalanceMatchSummary } from '../core/balanceLab';
 
 type MatchState = 'drop' | 'live' | 'goal' | 'over';
 
@@ -46,6 +49,11 @@ export interface MatchConfig {
   userTeam: Team;
   opponent: Team;
   level: number;
+  towerFloor?: number;
+  tournament?: boolean;
+  /** Balance Lab matches bypass campaign progression and return metrics to the lab. */
+  testMode?: boolean;
+  powerIds?: string[];
 }
 
 export class GameScene extends Phaser.Scene {
@@ -72,6 +80,12 @@ export class GameScene extends Phaser.Scene {
   private oppTeam: Team = OPPONENTS[0];
   private userTeam: Team = USER_TEAM;
   private campaign = false;
+  private towerFloor: number | undefined;
+  private tournament = false;
+  private testMode = false;
+  private powerIds: string[] = [];
+  private powerRuntime = new PowerRuntime(POWER_DEFINITIONS, []);
+  private balanceMetrics = { shots: 0, passes: 0, jukes: 0, parries: 0, checks: 0, checkHits: 0, goalsFor: 0, goalsAgainst: 0 };
   private pauseOverlay: PauseOverlay | null = null;
   private scoreText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
@@ -85,7 +99,12 @@ export class GameScene extends Phaser.Scene {
       this.userTeam = c.userTeam;
       this.oppTeam = c.opponent;
       this.diff = difficultyAt(c.level);
-      this.campaign = true;
+      this.towerFloor = c.towerFloor;
+      this.tournament = c.tournament === true;
+      this.testMode = c.testMode === true;
+      this.powerIds = c.powerIds ?? (this.testMode ? [] : DEFAULT_CAMPAIGN_POWER_IDS);
+      this.powerRuntime = new PowerRuntime(POWER_DEFINITIONS, this.powerIds);
+      this.campaign = !this.testMode;
     } else {
       // Dev mode (and the sim test, which skips init entirely): index + URL knobs.
       const g = data as GameData | undefined;
@@ -111,13 +130,19 @@ export class GameScene extends Phaser.Scene {
     this.oneTimerArmed = null;
     this.pauseOverlay = null;
     this.campaign = false;
+    this.towerFloor = undefined;
+    this.tournament = false;
+    this.testMode = false;
+    this.powerIds = [];
+    this.powerRuntime = new PowerRuntime(POWER_DEFINITIONS, []);
+    this.balanceMetrics = { shots: 0, passes: 0, jukes: 0, parries: 0, checks: 0, checkHits: 0, goalsFor: 0, goalsAgainst: 0 };
   }
 
   create(): void {
     wireShutdown(this);
     drawRink(this);
 
-    if (!this.campaign) this.oppTeam = OPPONENTS[this.opponentIdx] ?? OPPONENTS[0];
+    if (!this.campaign && !this.testMode) this.oppTeam = OPPONENTS[this.opponentIdx] ?? OPPONENTS[0];
     this.players = [];
     this.userTeam.players.forEach((pd, i) => this.players.push(this.makePlayer(this.userTeam, 0, i, pd)));
     this.oppTeam.players.forEach((pd, i) => this.players.push(this.makePlayer(this.oppTeam, 1, i, pd)));
@@ -144,7 +169,7 @@ export class GameScene extends Phaser.Scene {
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
         'Arrows move · SPACE pass / switch · SHIFT = shoot / check · E / F = Juke / Counter · ' +
-          (this.campaign ? 'ESC pause' : 'R restart'),
+          (this.campaign ? 'ESC pause' : this.testMode ? 'ENTER results' : 'R restart'),
         {
           fontFamily: 'monospace',
           fontSize: '13px',
@@ -154,29 +179,33 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 1);
 
     this.input.keyboard!.on('keydown-R', () => {
-      if (!this.campaign && this.state === 'over') this.restart();
+      if (!this.campaign && !this.testMode && this.state === 'over') this.restart();
     });
     this.input.keyboard!.on('keydown-ENTER', () => {
       if (this.state !== 'over') return;
-      if (this.campaign) this.toResult();
+      if (this.testMode) this.toBalanceLab();
+      else if (this.campaign) this.toResult();
       else this.restart();
     });
     // ESC toggles the pause overlay. This handler is the ONLY place that binds ESC
     // for pausing — the overlay and any open ConfirmDialog must not also bind ESC,
     // or two listeners would fire in one dispatch and cancel each other.
     this.input.keyboard!.on('keydown-ESC', () => {
-      if (!this.campaign || this.state === 'over' || !this.pauseOverlay) return;
+      if ((!this.campaign && !this.testMode) || this.state === 'over' || !this.pauseOverlay) return;
       if (this.pauseOverlay.dialogOpen) return; // dialog owns ESC (it cancels)
-      if (this.pauseOverlay.visible) this.pauseOverlay.hide();
+      if (this.pauseOverlay.visible) this.pauseOverlay.handleEscape();
       else this.pauseOverlay.show();
     });
-    if (this.campaign) {
+    if (this.campaign || this.testMode) {
       this.pauseOverlay = new PauseOverlay(
         this,
         this.oppTeam.name,
+        this.userTeam,
+        this.powerIds,
+        this.campaign,
         () => this.pauseOverlay?.hide(),
-        () => this.endRun('GameOverScene', { reason: 'forfeit' }),
-        () => this.endRun('TitleScene'),
+        () => this.campaign ? this.endRun('GameOverScene', { reason: 'forfeit' }) : this.scene.start('BalanceLabScene'),
+        () => this.campaign ? this.endRun('TitleScene') : this.scene.start('BalanceLabScene'),
       );
     }
 
@@ -425,6 +454,7 @@ export class GameScene extends Phaser.Scene {
       p.aiChase = p === chaserOf[0] || p === chaserOf[1];
       // Difficulty slows opposing SKATERS; goalies keep (nearly) full speed — a slowed goalie just gives the net away.
       p.speedScale = p.isGoalie ? (p.team === 1 ? this.diff.aiGoalieSpeed : 1) : p.team === 1 ? this.diff.aiSpeed : AI_SPEED_FACTOR;
+      p.powerSpeedScale = this.powerRuntime.statMultiplier(this.actorKey(p), 'speed', this.clock);
       if (p !== this.controlled) stepAI(p, world);
       p.update(dt, this.puck.pos);
     }
@@ -578,6 +608,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private grantPuck(p: Player): void {
+    const wasUserPossession = this.puck.state === 'carried' && this.puck.carriedBy?.team === 0;
     const pass = this.puck.pass;
     const viaPass = !!pass && pass.to === p && pass.from.team === p.team;
     this.puck.give(p);
@@ -586,6 +617,7 @@ export class GameScene extends Phaser.Scene {
     p.pickupCooldown = PICKUP_DELAY;
     this.puck.lastTaker = p;
     p.receivedByPass = viaPass;
+    if (p.team === 0 && !wasUserPossession) this.emitPowerEvent('possessionGained', p);
     p.sinceReceive = 0;
     const armed = this.oneTimerArmed;
     if (armed && armed.player !== p) this.oneTimerArmed = null; // someone else got it
@@ -699,13 +731,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private doPass(from: Player, to: Player): void {
+    if (from.team === 0) this.balanceMetrics.passes++;
     // Lead the pass: aim at where the receiver is skating, not where they are.
-    const speed = PASS_SPEED * from.stats.passPower;
+    const speed = PASS_SPEED * from.stats.passPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'passPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'pass');
     const d = dist(from.pos, to.pos);
     const flight = (d / speed) * 0.75;
     const lead = v(to.pos.x + to.vel.x * flight, to.pos.y + to.vel.y * flight);
     this.puck.launch(norm(sub(lead, from.pos)), speed, from);
     this.puck.pass = { from, to }; // in flight: lets the receiver time a one-timer
+    if (from.team === 0) this.emitPowerEvent('passComplete', from);
     // Control follows the pass: you become the receiver (so you can one-time it).
     if (from.team === 0 && !to.isGoalie) this.manualPick = to;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.25);
@@ -734,6 +768,7 @@ export class GameScene extends Phaser.Scene {
    * beyond ±1 is wide — only the AI does that). See core/shot.ts.
    */
   private shootPuck(from: Player, aimY: number, charge: number, quick = false): void {
+    if (from.team === 0) this.balanceMetrics.shots++;
     const goalX = from.team === 0 ? ICE_X + RINK_W : ICE_X;
     // Aim from where the PUCK is (it sits on the blade, off to one side of the
     // player) — aiming from the player's centre put full-corner shots on the post.
@@ -752,8 +787,9 @@ export class GameScene extends Phaser.Scene {
     const perfect = !quick && !fooled && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
-      from.stats.shotPower * (quick ? ONE_TIMER_MULT : perfect ? PERFECT_SHOT_MULT : 1);
+      from.stats.shotPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'shotPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'shot') * (quick ? ONE_TIMER_MULT : perfect ? PERFECT_SHOT_MULT : 1);
     this.puck.launch(aim, speed, from);
+    if (from.team === 0) this.emitPowerEvent('shotTaken', from);
     this.puck.quick = quick || fooled; // the goalie reads it late either way
     from.stickSwing = 0.3;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.15);
@@ -787,6 +823,7 @@ export class GameScene extends Phaser.Scene {
     }
     const timing = parryTiming(carrier.tellDur, carrier.moveT, d.stats.parryFrac);
     if (id === carrier.move && timing === 'success') {
+      if (d.team === 0) { this.balanceMetrics.parries++; this.emitPowerEvent('parrySuccess', d); }
       // PARRY! Cancel the carrier's move (no effect), steal, counter-attack.
       carrier.move = null;
       carrier.moveResolved = true;
@@ -814,6 +851,7 @@ export class GameScene extends Phaser.Scene {
    */
   private doCheck(d: Player): void {
     if (d.checkCd > 0 || d.stagger > 0 || d.guardT > 0 || d.down) return;
+    if (d.team === 0) this.balanceMetrics.checks++;
     d.checkCd = CHECK_COOLDOWN_BASE - CHECK_COOLDOWN_PER_DEF * d.stats.checkPower; // big checkers re-check sooner
     d.guardT = CHECK_TIME;
     d.guardStart = this.clock; // a juke is only stuffed by a check that was already up when its tell began
@@ -839,10 +877,11 @@ export class GameScene extends Phaser.Scene {
     const n = len(off) > 1 ? norm(off) : v(g.team === 0 ? 1 : -1, 0);
     const impact = clamp(0.6 + closing / 300, 0.6, 1.5);
     const mult = g.team === 1 ? this.diff.aiCheckDamage : 1;
-    const dmg = (CHECK_DAMAGE_BASE + CHECK_DAMAGE_PER_DEF * g.stats.checkPower) * impact * mult;
+    const cp = g.stats.checkPower * this.powerRuntime.statMultiplier(this.actorKey(g), 'checkPower', this.clock);
+    const dmg = (CHECK_DAMAGE_BASE + CHECK_DAMAGE_PER_DEF * cp) * impact * mult;
     // A BUMP (not a throw): stops the carrier's progress and stuns them, but leaves them in
     // pressure range — and adds pressure, so a clean check on a walker leads to a strip.
-    const cp = g.stats.checkPower;
+    if (g.team === 0) this.balanceMetrics.checkHits++;
     o.vel = scale(n, (CHECK_BUMP_BASE + CHECK_BUMP_PER_DEF * cp) * impact * (0.5 + 0.5 * mult));
     o.stagger = Math.max(o.stagger, (CHECK_STAGGER_BASE + CHECK_STAGGER_PER_DEF * cp) * impact * mult);
     if (o.carrying) o.pressure = Math.min(0.95, o.pressure + (CHECK_PRESSURE_BASE + CHECK_PRESSURE_PER_DEF * cp) * impact * mult);
@@ -854,6 +893,7 @@ export class GameScene extends Phaser.Scene {
     g.vel = scale(g.vel, 0.3);
     this.popup(`-${Math.round(dmg)}`, o.pos, '#ff6b6b', 20);
     this.damage(o, dmg);
+    if (g.team === 0) this.emitPowerEvent('checkHit', g);
   }
 
   private damage(o: Player, amount: number): void {
@@ -943,9 +983,10 @@ export class GameScene extends Phaser.Scene {
     p.facing = h0;
     // DASH: velocity is held along the (curving) heading for the effect phase (see Player.update / dashSpeedAt).
     p.dashDir = dir;
-    p.dashSpeed = def.dash * p.stats.skill;
+    p.dashSpeed = def.dash * p.stats.skill * this.powerRuntime.statMultiplier(this.actorKey(p), 'skill', this.clock);
     p.vel = scale(dir, dashSpeedAt(p.dashSpeed, 0));
     this.launchFx(p, id);
+    if (p.team === 0) { this.balanceMetrics.jukes++; this.emitPowerEvent('moveLanded', p); }
     if (eg && plan && answered && plan.stance === 'bite') {
       const side = lateralSignY(def, p.dashAim, p.moveSide);
       if (side !== 0) {
@@ -1060,6 +1101,8 @@ export class GameScene extends Phaser.Scene {
 
   private onGoal(side: 0 | 1): void {
     this.score[side] += 1;
+    if (this.testMode) { if (side === 0) this.balanceMetrics.goalsFor++; else this.balanceMetrics.goalsAgainst++; }
+    if (side === 0) { const scorer = this.controlled ?? this.players.find((p) => p.team === 0 && p.carrying); if (scorer) this.emitPowerEvent('goalScored', scorer); }
     this.updateScoreText();
     this.setState('goal');
     this.flash(side === 0 ? `GOAL — ${this.userTeam.name.toUpperCase()}!` : `GOAL — ${this.oppTeam.name.toUpperCase()}!`);
@@ -1074,7 +1117,8 @@ export class GameScene extends Phaser.Scene {
       this.stateTimer = GOAL_PAUSE;
     } else if (s === 'over') {
       this.flash(this.score[0] > this.score[1] ? 'YOU WIN!' : 'YOU LOSE', true);
-      this.hintText.setText(this.campaign ? 'ENTER — continue' : 'R — restart').setAlpha(1);
+      this.hintText.setText(this.testMode ? 'CLICK / ENTER — return to Balance Lab' : this.campaign ? 'ENTER — continue' : 'R — restart').setAlpha(1);
+      this.hintText.setInteractive({ useHandCursor: true }).removeAllListeners('pointerdown').on('pointerdown', () => { if (this.testMode) this.toBalanceLab(); else if (this.campaign) this.toResult(); else this.restart(); });
     } else {
       this.bannerText.setAlpha(0);
       this.hintText.setAlpha(0);
@@ -1148,11 +1192,34 @@ export class GameScene extends Phaser.Scene {
 
   /** Hand a finished campaign match to the result screen. */
   private toResult(): void {
+    if (this.testMode) { this.toBalanceLab(); return; }
     this.scene.start('ResultScene', {
       teamId: this.oppTeam.id,
       userScore: this.score[0],
       opponentScore: this.score[1],
+      tournament: this.tournament,
+      towerFloor: this.towerFloor,
     });
+  }
+
+  private actorKey(p: Player): string { return `${p.team}:${p.slot}`; }
+
+  private emitPowerEvent(trigger: PowerTrigger, p: Player): void {
+    const activations = this.powerRuntime.emit(trigger, {
+      actorKey: this.actorKey(p), team: p.team, role: p.isGoalie ? 'goalie' : 'field', hasPuck: p.carrying, now: this.clock,
+    });
+    for (const activation of activations) this.popup(`${activation.powerName.toUpperCase()}!`, p.pos, '#7bdff2', 15);
+  }
+
+  private toBalanceLab(): void {
+    const summary: BalanceMatchSummary = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, date: new Date().toISOString(),
+      opponentId: this.oppTeam.id, opponentName: this.oppTeam.name, playerTeamName: this.userTeam.name,
+      result: this.score[0] > this.score[1] ? 'win' : 'loss', playerScore: this.score[0], opponentScore: this.score[1],
+      liveSeconds: Math.round(this.clock * 10) / 10, ...this.balanceMetrics, powerIds: [...this.powerIds],
+      powerActivations: this.powerRuntime.activations.length, activationNames: this.powerRuntime.activations.map((a) => a.powerName),
+    };
+    this.scene.start('BalanceLabScene', { latest: summary });
   }
 
   /** Forfeit / quit: the run ends in a loss, then leave the match. */

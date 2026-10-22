@@ -6,13 +6,13 @@
  */
 import type { CampaignState, MatchOutcome } from './campaign';
 import { POACH_STATS } from './poach';
-import { CAMPAIGN_TEAMS, USER_TEAM } from '../config/teams';
+import { ALL_TEAMS, USER_TEAM } from '../config/teams';
 
 /** Bump when CampaignState (or Team/PlayerDef) changes shape; older saves are then discarded. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 const OUTCOMES: readonly string[] = ['win', 'loss'] satisfies MatchOutcome[];
-const TEAM_IDS: readonly string[] = CAMPAIGN_TEAMS.map((t) => t.id);
+const TEAM_IDS: readonly string[] = ALL_TEAMS.map((t) => t.id);
 const FIELD_COUNT = USER_TEAM.players.filter((p) => !p.goalie).length;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -25,7 +25,7 @@ function isStats(v: unknown): boolean {
 }
 
 function isPlayer(v: unknown): boolean {
-  return isRecord(v) && isString(v.name) && isFiniteNumber(v.sprite) && (v.goalie === undefined || typeof v.goalie === 'boolean') && isStats(v.stats);
+  return isRecord(v) && isString(v.name) && isFiniteNumber(v.sprite) && (v.goalie === undefined || typeof v.goalie === 'boolean') && (v.isStarter === undefined || typeof v.isStarter === 'boolean') && isStats(v.stats);
 }
 
 function isRoster(v: unknown): boolean {
@@ -63,10 +63,12 @@ export function parseRun(raw: string | null): CampaignState | null {
 
   const run = data.run;
   if (!isTeam(run.userTeam)) return null;
+  if (run.bench !== undefined && (!Array.isArray(run.bench) || !run.bench.every(isPlayer))) return null;
   if (!isRecord(run.results) || !Object.entries(run.results).every(([id, outcome]) => TEAM_IDS.includes(id) && OUTCOMES.includes(outcome as string))) return null;
   if (!Array.isArray(run.poaches) || !run.poaches.every(isPoach)) return null;
   if (typeof run.gameOver !== 'boolean' || typeof run.victory !== 'boolean') return null;
   if (!isOptionalTeamId(run.matchInProgress) || !isOptionalTeamId(run.pendingPoach)) return null;
 
+  if (!Array.isArray(run.bench)) run.bench = [];
   return run as unknown as CampaignState;
 }
