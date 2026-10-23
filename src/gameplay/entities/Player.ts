@@ -26,7 +26,7 @@ const SWING_TIME = 0.3;
  *      tell ends — with the parry window drawn as a shaded band the ring must
  *      enter; the ring turns white inside the window ("NOW");
  *   3. a SHAPE badge above the head (circle = Spin, diamond = Deke) …
- *   4. … carrying the KEY LETTER to press (learning aid; difficulty-gated).
+ *   4. … carrying the KEY LETTER to press (always visible so fast tells stay readable).
  * The stick still flashes the move colour too.
  */
 const TELL_RING_START = 54; // ring starts this far outside the target ring
@@ -35,10 +35,10 @@ const CUE_BURST_TIME = 0.28; // the flash when a window opens
 
 /**
  * Every cue uses the same grammar (so you learn it once): a ring shrinks onto a
- * fixed target ring; a shaded band marks the window; the ring turns white and a
- * burst fires when the window opens. What differs per source is the SHAPE, so
- * moves are tell-able at a glance:  Spin = rotating arcs (circle), Deke = diamond,
- * shot window on the goalie = gold circle + "SHOOT!".
+ * fixed target ring; a shaded band marks the window; the ring thickens and pulses
+ * when the window opens. Skill-move colors never change at the timing window. What differs per source is the SHAPE, so
+ * moves are tell-able at a glance: Spin = orange circle + E, Deke = yellow diamond + F;
+ * the timing window changes pulse/line weight, never the move colour. Shot windows use a gold circle + SHOOT!.
  */
 type CueShape = 'circle' | 'diamond' | 'spin';
 interface Cue {
@@ -68,7 +68,7 @@ export interface TellHint {
   window: number;
   /** Show the key letter in the badge. */
   showKey: boolean;
-  /** Is the watching defender inside the carrier's parry cone? (colours the cone white / red) */
+  /** Is the watching defender inside the carrier's parry cone? Controls emphasis only, never move identity. */
   inCone: boolean;
 }
 
@@ -79,6 +79,7 @@ export interface PlayerVisual {
   color: number;
   colorDark: number;
   stats: HockeyStats;
+  isStarter?: boolean;
 }
 
 /**
@@ -159,6 +160,7 @@ export class Player {
   aimY = 0; // shot aim along the goal mouth, -1..1 (reset when a charge starts)
   private cueIn = false;
   private cueBurst = 0;
+  private cueBurstColor = 0xffffff;
 
   readonly seed = Math.random();
   readonly slot: number;
@@ -221,8 +223,27 @@ export class Player {
     return this.def.isGoalie;
   }
 
+  get isStarter(): boolean {
+    return this.def.isStarter === true;
+  }
+
+  get sprite(): number {
+    return this.def.sprite;
+  }
+
   get stats(): HockeyStats {
     return this.def.stats;
+  }
+
+  /** Swap a live skater's form without rebuilding its rink position or AI state. */
+  setForm(name: string, sprite: number, stats: HockeyStats): void {
+    this.def = { ...this.def, name, sprite, stats };
+    if (this.img) {
+      const key = `pkm-${sprite}`;
+      if (this.img.scene.textures.exists(key)) this.img.setTexture(key);
+      this.img.setScale(this.def.isGoalie ? 0.5 : 0.44);
+    }
+    this.hp = Math.min(this.hp, stats.maxHp);
   }
 
   radius(): number {
@@ -481,8 +502,9 @@ export class Player {
     const flicker = 0.5 + 0.5 * Math.sin(this.t * 36);
     const col = cue.color;
 
-    // 1. Body glow — grows through the cue and goes aggressive once the window is open.
-    g.fillStyle(cue.inWindow ? 0xffffff : col, 0.14 + 0.28 * cue.progress + (cue.inWindow ? 0.3 * flicker : 0));
+    // 1. Body glow stays in the move's colour family. Timing is conveyed by a stronger pulse,
+    // not by changing the attack hue to white (which obscures E/orange vs F/yellow).
+    g.fillStyle(col, 0.14 + 0.28 * cue.progress + (cue.inWindow ? 0.3 * flicker : 0));
     g.fillCircle(0, 2, r + 5 + (cue.inWindow ? 4 : 0));
 
     // 2. Window band + fixed target ring + the moving ring.
@@ -491,11 +513,11 @@ export class Player {
     this.strokeCueRing(g, cue.shape, (openR + target) / 2, false);
     g.lineStyle(3, col, 0.95);
     this.strokeCueRing(g, cue.shape, target, false);
-    g.lineStyle(cue.inWindow ? 6 : 3, cue.inWindow ? 0xffffff : col, 1);
+    g.lineStyle(cue.inWindow ? 6 + 1.5 * flicker : 3, col, 1);
     this.strokeCueRing(g, cue.shape, ringR, true);
 
     // 3. The instant the window opens: an expanding flash.
-    if (cue.inWindow && !this.cueIn) this.cueBurst = CUE_BURST_TIME;
+    if (cue.inWindow && !this.cueIn) { this.cueBurst = CUE_BURST_TIME; this.cueBurstColor = cue.color; }
     this.cueIn = cue.inWindow;
     this.drawBurst(g, r);
 
@@ -504,7 +526,7 @@ export class Player {
     const k = (cue.inWindow ? 1.2 + 0.1 * flicker : 1) * cue.labelScale;
     const br = 13 * k;
     if (cue.badge !== 'none') {
-      g.fillStyle(cue.inWindow ? 0xffffff : col, 0.97);
+      g.fillStyle(col, 0.97);
       g.lineStyle(3, 0x000000, 1);
       if (cue.badge === 'diamond') {
         const pts = [{ x: 0, y: by - br * 1.2 }, { x: br * 1.2, y: by }, { x: 0, y: by + br * 1.2 }, { x: -br * 1.2, y: by }];
@@ -529,7 +551,7 @@ export class Player {
   private drawBurst(g: Phaser.GameObjects.Graphics, r: number): void {
     if (this.cueBurst <= 0) return;
     const k = 1 - this.cueBurst / CUE_BURST_TIME;
-    g.lineStyle(2 + 7 * (1 - k), 0xffffff, 1 - k);
+    g.lineStyle(2 + 7 * (1 - k), this.cueBurstColor, 1 - k);
     g.strokeCircle(0, 2, r + 10 + 66 * k);
   }
 
@@ -645,16 +667,19 @@ export class Player {
     }
     this.drawCue(g, r, cue);
 
-    // Parry cone: while a human defender watches a tell, show where a parry counts
-    // (white = you're inside it, red = you're not — move into the front!).
-    if (telling && this.tellHint) {
-      const col = this.tellHint.inCone ? 0xffffff : 0xff6b6b;
+    // Parry cone: its hue ALWAYS identifies the move being telegraphed (Spin = orange,
+    // Deke = yellow). Position validity is shown through opacity, not a conflicting red/white
+    // recolour, so the cone never tells the player the wrong counter key.
+    if (telling && this.tellHint && this.move) {
+      const col = MOVE_DEFS[this.move].color;
       const a0 = this.facing - PARRY_CONE_HALF;
       const a1 = this.facing + PARRY_CONE_HALF;
-      g.fillStyle(col, 0.1);
+      const fillAlpha = this.tellHint.inCone ? 0.20 : 0.075;
+      const lineAlpha = this.tellHint.inCone ? 0.90 : 0.38;
+      g.fillStyle(col, fillAlpha);
       g.slice(0, 2, PARRY_RANGE, a0, a1, false);
       g.fillPath();
-      g.lineStyle(2, col, 0.55);
+      g.lineStyle(this.tellHint.inCone ? 3 : 2, col, lineAlpha);
       g.beginPath();
       g.moveTo(0, 2);
       g.lineTo(Math.cos(a0) * PARRY_RANGE, 2 + Math.sin(a0) * PARRY_RANGE);

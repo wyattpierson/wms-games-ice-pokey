@@ -8,33 +8,38 @@ import {
   ONE_TIMER_GRACE, ONE_TIMER_LEAD, ONE_TIMER_MULT, ONE_TIMER_RING_TIME, PARRY_CONE_HALF, SHOT_RANGE, COUNTER_BURST,
   DROP_TIME, GOALIE_SAVE_COOLDOWN, GOALIE_SAVE_DEFLECT_SPEED,
   GOALIE_SAVE_RADIUS, GOALS_TO_WIN, GOAL_PAUSE, PARRY_RANGE, PASS_SPEED, PICKUP_DELAY,
-  PICKUP_RADIUS, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT, SHOT_SPEED_MAX,
+  PICKUP_RADIUS, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT, SUPER_SHOT_MULT, SHOT_SPEED_MAX,
   SHOT_SPEED_MIN, FAST_PUCK_SPEED, STUFF_STAGGER_BASE, STUFF_STAGGER_PER_DEF,
   TELL_STEER, TUMBLE_TIME,
 } from '../config/gameplay';
 import { DEFAULT_LEVEL, difficultyAt, type Difficulty } from '../config/difficulty';
-import { CENTER_X, CENTER_Y, GAME_HEIGHT, ICE_X, RINK_W } from '../config/rink';
+import { CENTER_X, CENTER_Y, GAME_HEIGHT, GAME_WIDTH, ICE_X, ICE_Y, RINK_H, RINK_W } from '../config/rink';
 import { OPPONENTS, USER_TEAM, type Team } from '../config/teams';
 import { abandonMatch } from '../core/campaign';
+import { canRetryBalanceLabLoss } from '../core/balanceLabItems';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
-import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from '../core/shot';
+import { aimTargetY, chargeFromHold, isSuperShotHold, perfectWindowHold, superShotWindowHold, shotDirection } from '../core/shot';
 import {
   ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, dekeAxis, lateralSignY, MOVE_DEFS, parryTiming, verticalFromStick,
   windowSeconds, type MoveId,
 } from '../core/moves';
 import { respectAfterFool } from '../core/goalie';
 import { stepPressure, type Presser } from '../core/pressure';
-import { deriveStats } from '../core/stats';
+import { deriveStats, type HockeyStats } from '../core/stats';
 import { nearestThreat, stepAI, type AIWorld } from '../gameplay/ai';
 import { Controls } from '../gameplay/controls';
 import { Player } from '../gameplay/entities/Player';
 import { Puck } from '../gameplay/entities/Puck';
 import { drawRink } from '../gameplay/entities/Rink';
 import { getRun, setRun } from '../state/runStore';
+import { archiveCareerRun, beginCareerMatch, finishCareerMatch, recordCareerGoal } from '../state/careerStatsStore';
 import { PauseOverlay } from '../ui/PauseOverlay';
 import { wireShutdown } from '../ui/sceneLifecycle';
 import { POWER_DEFINITIONS, DEFAULT_CAMPAIGN_POWER_IDS } from '../config/powers';
 import { PowerRuntime, type PowerTrigger } from '../core/powers';
+import { ITEM_IDS, STARTER_EVOLUTIONS } from '../config/progression';
+import { getMeta, type StarterId } from '../state/metaStore';
+import { isStarterAtFinalEvolution, MEGA_STARTER_FORMS } from '../core/permanentItems';
 import type { BalanceMatchSummary } from '../core/balanceLab';
 
 type MatchState = 'drop' | 'live' | 'goal' | 'over';
@@ -54,6 +59,11 @@ export interface MatchConfig {
   /** Balance Lab matches bypass campaign progression and return metrics to the lab. */
   testMode?: boolean;
   powerIds?: string[];
+  /** Balance Lab-only permanent item toggles. They never touch the campaign save. */
+  testItemIds?: string[];
+  /** Synthetic final-form starter used to exercise Mega Evolution in Balance Lab. */
+  testStarter?: StarterId | null;
+  testRetryUsed?: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -84,12 +94,19 @@ export class GameScene extends Phaser.Scene {
   private tournament = false;
   private testMode = false;
   private powerIds: string[] = [];
+  private testItemIds: string[] = [];
+  private testStarter: StarterId | null = null;
+  private testRetryUsed = false;
   private powerRuntime = new PowerRuntime(POWER_DEFINITIONS, []);
   private balanceMetrics = { shots: 0, passes: 0, jukes: 0, parries: 0, checks: 0, checkHits: 0, goalsFor: 0, goalsAgainst: 0 };
   private pauseOverlay: PauseOverlay | null = null;
   private scoreText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
   private hintText!: Phaser.GameObjects.Text;
+  private megaHud: { bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } | null = null;
+  private megaOriginal: { player: Player; name: string; sprite: number; stats: HockeyStats } | null = null;
+  /** A match may activate Mega Evolution once. A goal reverts the form but does not refund the use. */
+  private megaUsedThisMatch = false;
 
   init(data?: MatchConfig | GameData): void {
     this.resetMatchState();
@@ -103,6 +120,9 @@ export class GameScene extends Phaser.Scene {
       this.tournament = c.tournament === true;
       this.testMode = c.testMode === true;
       this.powerIds = c.powerIds ?? (this.testMode ? [] : DEFAULT_CAMPAIGN_POWER_IDS);
+      this.testItemIds = c.testItemIds ?? [];
+      this.testStarter = c.testStarter ?? null;
+      this.testRetryUsed = c.testRetryUsed === true;
       this.powerRuntime = new PowerRuntime(POWER_DEFINITIONS, this.powerIds);
       this.campaign = !this.testMode;
     } else {
@@ -129,11 +149,17 @@ export class GameScene extends Phaser.Scene {
     this.manualPick = null;
     this.oneTimerArmed = null;
     this.pauseOverlay = null;
+    this.megaHud = null;
+    this.megaOriginal = null;
+    this.megaUsedThisMatch = false;
     this.campaign = false;
     this.towerFloor = undefined;
     this.tournament = false;
     this.testMode = false;
     this.powerIds = [];
+    this.testItemIds = [];
+    this.testStarter = null;
+    this.testRetryUsed = false;
     this.powerRuntime = new PowerRuntime(POWER_DEFINITIONS, []);
     this.balanceMetrics = { shots: 0, passes: 0, jukes: 0, parries: 0, checks: 0, checkHits: 0, goalsFor: 0, goalsAgainst: 0 };
   }
@@ -149,6 +175,7 @@ export class GameScene extends Phaser.Scene {
 
     this.puck = new Puck(this, CENTER_X, CENTER_Y);
     this.controls = new Controls(this);
+    if (this.campaign) beginCareerMatch(this.userTeam.name, getMeta().seasonYear, this.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));
 
     this.scoreText = this.add
       .text(CENTER_X, 14, '', { fontFamily: 'monospace', fontSize: '22px', color: '#ffffff' })
@@ -166,10 +193,18 @@ export class GameScene extends Phaser.Scene {
       .text(CENTER_X, CENTER_Y + 64, '', { fontFamily: 'monospace', fontSize: '16px', color: '#8b98ab' })
       .setOrigin(0.5)
       .setAlpha(0);
+    if (this.canMegaEvolve()) {
+      const bg = this.add.rectangle(GAME_WIDTH - 120, 39, 220, 32, 0x0b1c2b, 0.96)
+        .setStrokeStyle(2, 0xffd166).setInteractive({ useHandCursor: true }).setDepth(40);
+      const label = this.add.text(GAME_WIDTH - 120, 39, 'MEGA EVOLVE  [M]', { fontFamily: 'monospace', fontSize: '13px', color: '#ffd166', fontStyle: 'bold' }).setOrigin(.5).setDepth(41);
+      bg.on('pointerdown', () => this.activateMegaEvolution());
+      label.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.activateMegaEvolution());
+      this.megaHud = { bg, label };
+    }
     this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
         'Arrows move · SPACE pass / switch · SHIFT = shoot / check · E / F = Juke / Counter · ' +
-          (this.campaign ? 'ESC pause' : this.testMode ? 'ENTER results' : 'R restart'),
+          (this.campaign ? 'ESC pause' : this.testMode ? 'ENTER results / retry' : 'R restart'),
         {
           fontFamily: 'monospace',
           fontSize: '13px',
@@ -181,15 +216,22 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-R', () => {
       if (!this.campaign && !this.testMode && this.state === 'over') this.restart();
     });
+    this.input.keyboard!.on('keydown-SPACE', () => {
+      if (this.testMode && this.state === 'over' && this.canUseTestRetry()) this.toBalanceLab();
+    });
     this.input.keyboard!.on('keydown-ENTER', () => {
       if (this.state !== 'over') return;
-      if (this.testMode) this.toBalanceLab();
+      if (this.testMode) this.finishTestMatch();
       else if (this.campaign) this.toResult();
       else this.restart();
     });
     // ESC toggles the pause overlay. This handler is the ONLY place that binds ESC
     // for pausing — the overlay and any open ConfirmDialog must not also bind ESC,
     // or two listeners would fire in one dispatch and cancel each other.
+    this.input.keyboard!.on('keydown-M', () => {
+      if (this.pauseOverlay?.visible || this.state === 'over') return;
+      this.activateMegaEvolution();
+    });
     this.input.keyboard!.on('keydown-ESC', () => {
       if ((!this.campaign && !this.testMode) || this.state === 'over' || !this.pauseOverlay) return;
       if (this.pauseOverlay.dialogOpen) return; // dialog owns ESC (it cancels)
@@ -206,6 +248,7 @@ export class GameScene extends Phaser.Scene {
         () => this.pauseOverlay?.hide(),
         () => this.campaign ? this.endRun('GameOverScene', { reason: 'forfeit' }) : this.scene.start('BalanceLabScene'),
         () => this.campaign ? this.endRun('TitleScene') : this.scene.start('BalanceLabScene'),
+        this.testItemIds,
       );
     }
 
@@ -250,24 +293,26 @@ export class GameScene extends Phaser.Scene {
 
   private updateLive(time: number, dt: number): void {
     this.clock += dt;
-    // 1. Who does the user control: the carrier on offense; on defense the
-    //    nearest field player, until SPACE picks a different one — that pick
-    //    STICKS (it used to be an index into a list re-sorted every frame, so
-    //    control jumped around and never reset) until your team has the puck.
+    // 1. Who does the user control: the carrier on offense; on defense keep the
+    //    current living skater until SPACE explicitly cycles defenders. Only choose
+    //    the nearest skater automatically when there is no valid current defender.
     const userCarrier = this.players.find((p) => p.team === 0 && p.carrying) ?? null;
     let desired: Player | null = userCarrier;
     if (userCarrier) {
       this.manualPick = null;
     } else {
-      const field = this.players
-        .filter((p) => p.team === 0 && !p.isGoalie && !p.down)
-        .sort((a, b) => dist(a.pos, this.puck.pos) - dist(b.pos, this.puck.pos));
+      // Keep SPACE cycling order stable by lineup/slot, not by distance to the puck.
+      // If players are moving, a distance-sorted list can reorder between frames and make
+      // the same key press jump to a seemingly random defender.
+      const field = this.players.filter((p) => p.team === 0 && !p.isGoalie && !p.down).sort((a, b) => a.slot - b.slot);
+      const nearest = [...field].sort((a, b) => dist(a.pos, this.puck.pos) - dist(b.pos, this.puck.pos));
       if (this.controls.justPressed('pass') && field.length) {
         const cur = this.controlled ? field.indexOf(this.controlled) : -1;
         this.manualPick = field[(cur + 1) % field.length];
       }
-      if (this.manualPick && (this.manualPick.down || this.manualPick.team !== 0)) this.manualPick = null;
-      desired = this.manualPick ?? field[0] ?? null;
+      if (this.manualPick && (this.manualPick.down || this.manualPick.team !== 0 || this.manualPick.isGoalie)) this.manualPick = null;
+      const currentIsValid = !!this.controlled && this.controlled.team === 0 && !this.controlled.isGoalie && !this.controlled.down;
+      desired = this.manualPick ?? (currentIsValid ? this.controlled : null) ?? nearest[0] ?? null;
     }
     if (desired && desired !== this.controlled) {
       this.controlled?.setControlled(false);
@@ -368,10 +413,15 @@ export class GameScene extends Phaser.Scene {
       const eg = this.players.find((p) => p.team === 1 && p.isGoalie);
       if (eg && c.carrying && c.charging) {
         const { open, close } = perfectWindowHold();
+        const superShotOwned = this.hasItem(ITEM_IDS.superShot);
+        const superWindow = superShotWindowHold();
+        const superTiming = superShotOwned && isSuperShotHold(c.holdT);
         eg.shotCue = {
           progress: Math.min(1, c.holdT / close),
-          openAt: open / close,
+          openAt: superShotOwned ? superWindow.open / close : open / close,
           inWindow: c.charge >= PERFECT_SHOT_CHARGE,
+          label: superTiming ? 'SUPER SHOT!' : undefined,
+          color: superTiming ? 0xffd166 : undefined,
         };
       }
       // One-timer cue on the RECEIVER: a ring shrinks as the pass arrives; white = shoot now.
@@ -445,7 +495,9 @@ export class GameScene extends Phaser.Scene {
     if (!userCarrier && oppCarrier?.move && this.controlled) {
       oppCarrier.tellHint = {
         window: windowSeconds(oppCarrier.tellDur, this.controlled.stats.parryFrac),
-        showKey: this.diff.showKeyHint,
+        // Always show the counter key: at high difficulty the tell is faster, so hiding
+        // the letter made the same colour grammar unnecessarily hard to read.
+        showKey: true,
         inCone: inFrontCone(oppCarrier.facing, oppCarrier.pos, this.controlled.pos, PARRY_CONE_HALF),
       };
     }
@@ -519,7 +571,7 @@ export class GameScene extends Phaser.Scene {
         p.pressers = [];
       }
     }
-    if (!carrier || carrier.isGoalie || carrier.down || carrier.move) {
+    if (!carrier || carrier.isGoalie || carrier.down) {
       if (carrier) {
         carrier.pressure = 0;
         carrier.pressers = [];
@@ -527,6 +579,9 @@ export class GameScene extends Phaser.Scene {
       this.puck.setPressure(0);
       return;
     }
+    // Starting a move is not itself an escape from pressure. If the move is stuffed
+    // or parried, the pressure remains and can still strip the puck. A landed move
+    // creates separation naturally as defenders are staggered/knocked out of range.
     const face = v(Math.cos(carrier.facing), Math.sin(carrier.facing));
     const near = this.players
       .filter((o) => o.team !== carrier.team && !o.isGoalie && !o.down && o.stagger <= 0 && dist(o.pos, carrier.pos) <= PRESSURE_RANGE)
@@ -546,6 +601,9 @@ export class GameScene extends Phaser.Scene {
     carrier.pickupCooldown = Math.max(carrier.pickupCooldown, PRESSURE_LOCKOUT);
     carrier.pressure = 0;
     carrier.pressers = [];
+    carrier.move = null;
+    carrier.moveResolved = true;
+    carrier.dashDir = null;
     carrier.charging = false;
     carrier.charge = 0;
     carrier.holdT = 0;
@@ -612,6 +670,7 @@ export class GameScene extends Phaser.Scene {
     const pass = this.puck.pass;
     const viaPass = !!pass && pass.to === p && pass.from.team === p.team;
     this.puck.give(p);
+    this.puck.lastPasser = viaPass ? pass!.from : null;
     p.pressure = 0;
     p.pressers = [];
     p.pickupCooldown = PICKUP_DELAY;
@@ -738,6 +797,7 @@ export class GameScene extends Phaser.Scene {
     const flight = (d / speed) * 0.75;
     const lead = v(to.pos.x + to.vel.x * flight, to.pos.y + to.vel.y * flight);
     this.puck.launch(norm(sub(lead, from.pos)), speed, from);
+    this.puck.lastPasser = null; // only credit the pass if a teammate actually receives it
     this.puck.pass = { from, to }; // in flight: lets the receiver time a one-timer
     if (from.team === 0) this.emitPowerEvent('passComplete', from);
     // Control follows the pass: you become the receiver (so you can one-time it).
@@ -785,15 +845,18 @@ export class GameScene extends Phaser.Scene {
       charge = Math.max(charge, GOALIE_FOOL_MIN_CHARGE);
     }
     const perfect = !quick && !fooled && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
+    const superShot = this.hasItem(ITEM_IDS.superShot) && !quick && !fooled && from === this.controlled && isSuperShotHold(from.holdT);
+    const shotMultiplier = quick ? ONE_TIMER_MULT : superShot ? SUPER_SHOT_MULT : perfect ? PERFECT_SHOT_MULT : 1;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
-      from.stats.shotPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'shotPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'shot') * (quick ? ONE_TIMER_MULT : perfect ? PERFECT_SHOT_MULT : 1);
+      from.stats.shotPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'shotPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'shot') * shotMultiplier;
     this.puck.launch(aim, speed, from);
     if (from.team === 0) this.emitPowerEvent('shotTaken', from);
     this.puck.quick = quick || fooled; // the goalie reads it late either way
     from.stickSwing = 0.3;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.15);
-    if (perfect) this.popup('!', from.pos, '#ffffff');
+    if (superShot) this.popup('SUPER SHOT!', from.pos, '#ffd166', 26);
+    else if (perfect) this.popup('!', from.pos, '#ffffff');
     if (quick) this.popup('ONE-TIMER!', from.pos, '#7bdff2', 24);
     if (fooled) this.popup('SNAP SHOT!', from.pos, '#ffd60a', 24);
   }
@@ -827,8 +890,12 @@ export class GameScene extends Phaser.Scene {
       // PARRY! Cancel the carrier's move (no effect), steal, counter-attack.
       carrier.move = null;
       carrier.moveResolved = true;
-      carrier.tumble = 0.4;
-      carrier.stagger = 0.3;
+      if (d.team === 0 && this.hasItem(ITEM_IDS.superParry)) {
+        this.knockDown(carrier, 'SUPER PARRY!');
+      } else {
+        carrier.tumble = 0.4;
+        carrier.stagger = 0.3;
+      }
       this.grantPuck(d);
       const away = sub(d.pos, carrier.pos);
       const n = len(away) > 1
@@ -903,7 +970,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** 0 HP: drop the puck and lie on the ice for DOWN_TIME, then stand up with full HP. */
-  private knockDown(p: Player): void {
+  private knockDown(p: Player, popupLabel = 'DOWN!'): void {
     p.down = true;
     p.downTimer = DOWN_TIME;
     p.move = null;
@@ -918,7 +985,7 @@ export class GameScene extends Phaser.Scene {
       const ang = Math.random() * Math.PI * 2;
       this.puck.launch(v(Math.cos(ang), Math.sin(ang)), 140, p);
     }
-    this.popup('DOWN!', p.pos, '#ff6b6b', 26);
+    this.popup(popupLabel, p.pos, popupLabel === 'SUPER PARRY!' ? '#ffd166' : '#ff6b6b', 26);
   }
 
   /**
@@ -947,8 +1014,14 @@ export class GameScene extends Phaser.Scene {
       p.tumble = TUMBLE_TIME;
       p.move = null; // cancel the effect (no spin, no burst)
       this.popup('BLOCKED', p.pos, '#9ad1ff', 22);
+      // A stuffed move has not escaped pressure. Keep the existing meter so
+      // nearby defenders can still strip the puck after the failed attempt.
       return;
     }
+
+    const superJukeTargets = p.team === 0 && id === 'deke' && this.hasItem(ITEM_IDS.superJuke)
+      ? this.players.filter(o => o.team !== p.team && !o.isGoalie && !o.down && dist(o.pos, p.pos) <= PARRY_RANGE + 24)
+      : [];
 
     // Aim = where you point at the end of the tell (else the way you face). The move
     // then bends/cuts away from that aim: Spin curves round the defender, Deke cuts at
@@ -978,6 +1051,14 @@ export class GameScene extends Phaser.Scene {
       }
       this.popup('READ', eg.pos, '#c9d1d9', 18);
     }
+
+    // The juke has cleared every defender check and any goalie smother attempt;
+    // only now has it actually landed. A move windup or stuffed/parried move
+    // must not wipe the carrier's pressure meter.
+    p.pressure = 0;
+    p.pressers = [];
+    if (this.puck.carriedBy === p) this.puck.setPressure(0);
+
     const h0 = dashHeading(def, p.dashAim, p.moveSide, 0);
     const dir = v(Math.cos(h0), Math.sin(h0));
     p.facing = h0;
@@ -1009,6 +1090,25 @@ export class GameScene extends Phaser.Scene {
       o.tumble = TUMBLE_TIME * 0.8;
       o.stagger = Math.max(o.stagger, def.stagger);
       o.guardT = 0;
+    }
+    // Super Juke: a close defender who failed to stuff/parry the move is left behind the carrier.
+    if (superJukeTargets.length) {
+      const travel = norm(dir);
+      const sideVector = v(-travel.y, travel.x);
+      superJukeTargets.forEach((o, index) => {
+        const side = (index % 2 === 0 ? 1 : -1);
+        o.pos = v(
+          clamp(p.pos.x - travel.x * 92 + sideVector.x * side * 20, ICE_X + 18, ICE_X + RINK_W - 18),
+          clamp(p.pos.y - travel.y * 92 + sideVector.y * side * 20, ICE_Y + 18, ICE_Y + RINK_H - 18),
+        );
+        o.vel = scale(travel, -175);
+        o.stagger = Math.max(o.stagger, 1.0);
+        o.tumble = Math.max(o.tumble, TUMBLE_TIME);
+        o.guardT = 0;
+        o.charging = false; o.charge = 0; o.holdT = 0;
+        o.move = null; o.moveResolved = true; o.dashDir = null;
+      });
+      this.popup('LEFT IN THE DUST!', p.pos, '#7bdff2', 22);
     }
   }
 
@@ -1102,7 +1202,13 @@ export class GameScene extends Phaser.Scene {
   private onGoal(side: 0 | 1): void {
     this.score[side] += 1;
     if (this.testMode) { if (side === 0) this.balanceMetrics.goalsFor++; else this.balanceMetrics.goalsAgainst++; }
-    if (side === 0) { const scorer = this.controlled ?? this.players.find((p) => p.team === 0 && p.carrying); if (scorer) this.emitPowerEvent('goalScored', scorer); }
+    const shooter = this.puck.lastTaker && this.puck.lastTaker.team === side ? this.puck.lastTaker : null;
+    const passer = shooter && this.puck.lastPasser?.team === side && this.puck.lastPasser !== shooter ? this.puck.lastPasser : null;
+    if (this.campaign) {
+      recordCareerGoal(side, side === 0 && shooter ? { name: shooter.name, sprite: shooter.sprite, isStarter: shooter.isStarter, goalie: shooter.isGoalie } : null,
+        side === 0 && passer ? { name: passer.name, sprite: passer.sprite, isStarter: passer.isStarter, goalie: passer.isGoalie } : null);
+    }
+    if (side === 0 && shooter) this.emitPowerEvent('goalScored', shooter);
     this.updateScoreText();
     this.setState('goal');
     this.flash(side === 0 ? `GOAL — ${this.userTeam.name.toUpperCase()}!` : `GOAL — ${this.oppTeam.name.toUpperCase()}!`);
@@ -1114,11 +1220,15 @@ export class GameScene extends Phaser.Scene {
       this.stateTimer = DROP_TIME;
       this.resetPositions();
     } else if (s === 'goal') {
+      this.revertMegaForm();
       this.stateTimer = GOAL_PAUSE;
     } else if (s === 'over') {
       this.flash(this.score[0] > this.score[1] ? 'YOU WIN!' : 'YOU LOSE', true);
-      this.hintText.setText(this.testMode ? 'CLICK / ENTER — return to Balance Lab' : this.campaign ? 'ENTER — continue' : 'R — restart').setAlpha(1);
-      this.hintText.setInteractive({ useHandCursor: true }).removeAllListeners('pointerdown').on('pointerdown', () => { if (this.testMode) this.toBalanceLab(); else if (this.campaign) this.toResult(); else this.restart(); });
+      const retryAvailable = this.canUseTestRetry();
+      this.hintText.setText(this.testMode
+        ? retryAvailable ? 'ENTER — RETRY ONCE  ·  SPACE — BACK TO LAB' : 'CLICK / ENTER — RETURN TO BALANCE LAB'
+        : this.campaign ? 'ENTER — continue' : 'R — restart').setAlpha(1);
+      this.hintText.setInteractive({ useHandCursor: true }).removeAllListeners('pointerdown').on('pointerdown', () => { if (this.testMode) this.finishTestMatch(); else if (this.campaign) this.toResult(); else this.restart(); });
     } else {
       this.bannerText.setAlpha(0);
       this.hintText.setAlpha(0);
@@ -1216,7 +1326,7 @@ export class GameScene extends Phaser.Scene {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, date: new Date().toISOString(),
       opponentId: this.oppTeam.id, opponentName: this.oppTeam.name, playerTeamName: this.userTeam.name,
       result: this.score[0] > this.score[1] ? 'win' : 'loss', playerScore: this.score[0], opponentScore: this.score[1],
-      liveSeconds: Math.round(this.clock * 10) / 10, ...this.balanceMetrics, powerIds: [...this.powerIds],
+      liveSeconds: Math.round(this.clock * 10) / 10, ...this.balanceMetrics, powerIds: [...this.powerIds], itemIds: [...this.testItemIds],
       powerActivations: this.powerRuntime.activations.length, activationNames: this.powerRuntime.activations.map((a) => a.powerName),
     };
     this.scene.start('BalanceLabScene', { latest: summary });
@@ -1224,8 +1334,20 @@ export class GameScene extends Phaser.Scene {
 
   /** Forfeit / quit: the run ends in a loss, then leave the match. */
   private endRun(sceneKey: string, data?: object): void {
-    if (this.campaign) setRun(abandonMatch(getRun()));
-    this.scene.start(sceneKey, data);
+    if (this.campaign) {
+      setRun(abandonMatch(getRun()));
+      archiveCareerRun({
+        outcome: 'forfeit',
+        teamName: this.userTeam.name,
+        year: getMeta().seasonYear,
+        lineup: this.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })),
+        lostTo: this.oppTeam.name,
+        score: { for: this.score[0], against: this.score[1] },
+        winsBeforeEnd: Object.values(getRun().results).filter(r => r === 'win').length,
+      });
+      finishCareerMatch();
+    }
+    this.scene.start(sceneKey, { ...(data ?? {}), ...(this.campaign ? { teamId: this.oppTeam.id, userScore: this.score[0], opponentScore: this.score[1] } : {}) });
   }
 
   shutdown(): void {
@@ -1237,6 +1359,66 @@ export class GameScene extends Phaser.Scene {
     this.scoreText.setText(
       `${this.userTeam.name}  ${this.score[0]} — ${this.score[1]}  ${this.oppTeam.name}   ·   first to ${GOALS_TO_WIN}`,
     );
+  }
+
+  /** A Balance Lab item toggle behaves like a purchased item, without touching saved unlocks. */
+  private hasItem(itemId: string): boolean {
+    if (this.testMode) return this.testItemIds.includes(itemId);
+    return this.campaign && getMeta().unlocked.includes(itemId);
+  }
+
+  private canUseTestRetry(): boolean {
+    return this.testMode && canRetryBalanceLabLoss(this.testItemIds, this.testRetryUsed, this.score[0], this.score[1]);
+  }
+
+  private finishTestMatch(): void {
+    if (!this.canUseTestRetry()) { this.toBalanceLab(); return; }
+    this.scene.restart({
+      userTeam: this.userTeam,
+      opponent: this.oppTeam,
+      level: this.diff.level,
+      testMode: true,
+      powerIds: [...this.powerIds],
+      testItemIds: [...this.testItemIds],
+      testStarter: this.testStarter,
+      testRetryUsed: true,
+    } satisfies MatchConfig);
+  }
+
+  private canMegaEvolve(): boolean {
+    if (this.megaUsedThisMatch || !this.hasItem(ITEM_IDS.megaEvolution)) return false;
+    if (this.testMode) {
+      if (!this.testStarter) return false;
+      const finalStage = STARTER_EVOLUTIONS[this.testStarter][STARTER_EVOLUTIONS[this.testStarter].length - 1];
+      return this.players.some(p => p.team === 0 && p.isStarter && !p.isGoalie && p.sprite === finalStage.sprite);
+    }
+    if (!this.campaign) return false;
+    const meta = getMeta();
+    if (!meta.starter || !isStarterAtFinalEvolution(meta.starter, meta.starterXp)) return false;
+    const finalStage = STARTER_EVOLUTIONS[meta.starter][STARTER_EVOLUTIONS[meta.starter].length - 1];
+    return this.players.some(p => p.team === 0 && p.isStarter && !p.isGoalie && p.sprite === finalStage.sprite);
+  }
+
+  private activateMegaEvolution(): void {
+    if (this.state !== 'live' || this.megaOriginal || !this.canMegaEvolve()) return;
+    const starter = this.testMode ? this.testStarter : getMeta().starter;
+    if (!starter) return;
+    const player = this.players.find(p => p.team === 0 && p.isStarter && !p.isGoalie);
+    const mega = MEGA_STARTER_FORMS[starter];
+    if (!player || !mega) return;
+    this.megaOriginal = { player, name: player.name, sprite: player.sprite, stats: player.stats };
+    this.megaUsedThisMatch = true;
+    player.setForm(mega.name, mega.sprite, deriveStats(mega.stats));
+    if (this.megaHud) this.megaHud.label.setText('MEGA ACTIVE  ·  UNTIL GOAL').setColor('#7bdff2');
+    this.popup(`${mega.name.toUpperCase()}!`, player.pos, '#ffd166', 28);
+  }
+
+  private revertMegaForm(): void {
+    if (!this.megaOriginal) return;
+    const old = this.megaOriginal;
+    old.player.setForm(old.name, old.sprite, old.stats);
+    this.megaOriginal = null;
+    if (this.megaHud) this.megaHud.label.setText('MEGA USED  ·  THIS MATCH').setColor('#8b98ab');
   }
 
   private makePlayer(team: Team, teamIdx: 0 | 1, i: number, pd: Team['players'][number]): Player {
@@ -1251,6 +1433,7 @@ export class GameScene extends Phaser.Scene {
         color: team.color,
         colorDark: team.colorDark,
         stats,
+        isStarter: pd.isStarter === true,
       },
       x,
       y,

@@ -18,6 +18,8 @@ export class Puck {
   state: PuckState = 'loose';
   carriedBy: Player | null = null;
   lastTaker: Player | null = null;
+  /** Most recent completed teammate pass in the current possession, used for assists. */
+  lastPasser: Player | null = null;
   scoredBy: 0 | 1 | null = null; // which team scored (team 0 attacks right)
   /** Set while a PASS is in flight: who threw it and who it is meant for (cleared on any pickup / shot). */
   pass: { from: Player; to: Player } | null = null;
@@ -46,6 +48,7 @@ export class Puck {
     if (this.carriedBy) this.carriedBy.carrying = false;
     this.carriedBy = null;
     this.lastTaker = null;
+    this.lastPasser = null;
     this.scoredBy = null;
     this.pass = null;
     this.quick = false;

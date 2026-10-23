@@ -46,6 +46,20 @@ function isPoach(v: unknown): boolean {
   );
 }
 
+
+function isRetrySnapshot(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (!isRecord(v) || !isString(v.teamId) || !TEAM_IDS.includes(v.teamId)) return false;
+  if (!isTeam(v.userTeam)) return false;
+  if (!Array.isArray(v.bench) || !v.bench.every(isPlayer)) return false;
+  if (!isRecord(v.results) || !Object.entries(v.results).every(([id, outcome]) => TEAM_IDS.includes(id) && OUTCOMES.includes(outcome as string))) return false;
+  if (!Array.isArray(v.poaches) || !v.poaches.every(isPoach)) return false;
+  if (v.pendingPoach !== undefined && !isOptionalTeamId(v.pendingPoach)) return false;
+  if (!isFiniteNumber(v.level) || v.level < 0 || v.level > 1 || typeof v.tournament !== 'boolean') return false;
+  if (v.towerFloor !== undefined && !isFiniteNumber(v.towerFloor)) return false;
+  return true;
+}
+
 export function serializeRun(state: CampaignState): string {
   return JSON.stringify({ version: SAVE_VERSION, run: state });
 }
@@ -68,6 +82,7 @@ export function parseRun(raw: string | null): CampaignState | null {
   if (!Array.isArray(run.poaches) || !run.poaches.every(isPoach)) return null;
   if (typeof run.gameOver !== 'boolean' || typeof run.victory !== 'boolean') return null;
   if (!isOptionalTeamId(run.matchInProgress) || !isOptionalTeamId(run.pendingPoach)) return null;
+  if ((run.retryUsed !== undefined && typeof run.retryUsed !== 'boolean') || !isRetrySnapshot(run.retrySnapshot)) return null;
 
   if (!Array.isArray(run.bench)) run.bench = [];
   return run as unknown as CampaignState;

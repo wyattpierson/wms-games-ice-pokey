@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getWorldState } from '../core/worldState';
 import { addRetroChrome } from '../ui/chrome';
 import { GAME_WIDTH } from '../config/rink';
 import { getRun, resetRun } from '../state/runStore';
@@ -8,6 +9,7 @@ import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
 import { addRun, beginNewYear, getMeta } from '../state/metaStore';
 import { yearOpening } from '../config/story';
+import { beginCareerRun } from '../state/careerStatsStore';
 
 export class VictoryScene extends Phaser.Scene {
   private menu!: Menu;
@@ -43,8 +45,10 @@ export class VictoryScene extends Phaser.Scene {
         resetRun();
         beginNewYear();
         addRun();
-        const intro=yearOpening(getMeta().seasonYear);
-        this.scene.start('DialogueScene',{nextScene:'ZoneSelectScene',lines:intro.lines,flag:intro.flag});
+        const freshRun = getRun();
+        beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));
+        const intro=yearOpening(getMeta().seasonYear, getWorldState());
+        this.scene.start('DialogueScene',{nextScene:'ZoneSelectScene',lines:intro.lines,flags:intro.flags});
       },
     });
     const menu = new MenuButton(this, W / 2, 588, 'MAIN MENU', {

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getWorldState } from '../core/worldState';
 import { addRetroChrome, addRetroPanel } from '../ui/chrome';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/rink';
 import { CAMPAIGN_TEAMS } from '../config/teams';
@@ -7,10 +8,11 @@ import { clearRunSave, getRun, hasSavedRun, resetRun, setRun, takeNotice } from 
 import { Menu, MenuButton } from '../ui/menu';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
-import { addRun, beginNewYear, getMeta, resetMetaState, setStoryFlag, type StarterId } from '../state/metaStore';
-import { STORY_BEATS, yearOpening } from '../config/story';
+import { addRun, beginNewYear, getMeta, resetMetaState, type StarterId } from '../state/metaStore';
+import { yearEndReflection, yearOpening } from '../config/story';
 import { STARTER_EVOLUTIONS } from '../config/progression';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { beginCareerRun, clearCareerStats } from '../state/careerStatsStore';
 
 const TEAM_PARAM = 'team';
 
@@ -28,7 +30,7 @@ const HELP_LINES = [
   ['', ''],
   ['RULES', 'first to 3 goals wins'],
   ['WIN', 'poach 1 player from the beaten team (swap: take 1, drop 1)'],
-  ['LOSE', 'the run ends — one-shot, no retries'],
+  ['LOSE', 'the run ends; Second Chance Charm grants one rematch per run'],
   ['GOAL', 'beat all 3 teams, then take the champion'],
 ];
 
@@ -43,8 +45,9 @@ export class TitleScene extends Phaser.Scene {
     super('TitleScene');
   }
 
-  create(): void {
+  create(data?: { advanceYearAfterReflection?: boolean }): void {
     wireShutdown(this);
+    if (data?.advanceYearAfterReflection) { this.beginNextYear(); return; }
     const W = GAME_WIDTH;
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.GOLD);
@@ -76,16 +79,14 @@ export class TitleScene extends Phaser.Scene {
       this.add.text(spr.x, 330, p.name.toUpperCase(), { fontFamily: FONT, fontSize: '12px', color: hex(THEME.WHITE) }).setOrigin(0.5);
     });
 
-    const beat = STORY_BEATS.find(b => b.when === 'run-start' && (!b.requiresFlag || meta.flags.includes(b.requiresFlag)) && (!b.requiresNoFlag || !meta.flags.includes(b.requiresNoFlag)));
-    if (beat) { this.add.text(W / 2, 360, beat.text, { fontFamily: FONT, fontSize: '13px', color: hex(THEME.GOLD), wordWrap: { width: 850 }, align: 'center' }).setOrigin(0.5); if (beat.setFlag) setStoryFlag(beat.setFlag); }
     const notice = takeNotice();
     if (notice) {
-      this.add.text(W / 2, 384, notice, { fontFamily: FONT, fontSize: '14px', color: hex(THEME.RED) }).setOrigin(0.5);
+      this.add.text(W / 2, 360, notice, { fontFamily: FONT, fontSize: '14px', color: hex(THEME.RED) }).setOrigin(0.5);
     }
 
     const newGame = !hasPlayed;
-    addRetroPanel(this, W / 2, 511, 370, 198, THEME.GOLD, FILL.panel);
-    const primaryBtn = new MenuButton(this, W / 2, 438, newGame ? 'NEW GAME' : 'CONTINUE', {
+    addRetroPanel(this, W / 2, 520, 410, 326, THEME.GOLD, FILL.panel);
+    const primaryBtn = new MenuButton(this, W / 2, 400, newGame ? 'NEW GAME' : 'CONTINUE', {
       color: THEME.GREEN,
       onSelect: () => {
         const current = getMeta();
@@ -99,23 +100,36 @@ export class TitleScene extends Phaser.Scene {
         }
         // A completed/failed run rolls straight into the next year. There is no
         // separate New Run button; Continue is the single campaign entry point.
-        resetRun();
-        beginNewYear();
-        addRun();
-        const intro = yearOpening(getMeta().seasonYear);
-        this.scene.start('DialogueScene', { nextScene: 'ZoneSelectScene', lines: intro.lines, flag: intro.flag });
+        const reflection = yearEndReflection(getWorldState());
+        if (reflection && !getMeta().flags.includes(reflection.flag)) {
+          this.scene.start('DialogueScene', { nextScene: 'TitleScene', nextData: { advanceYearAfterReflection: true }, lines: reflection.lines, flag: reflection.flag });
+          return;
+        }
+        this.beginNextYear();
       },
     });
-    const howBtn = new MenuButton(this, W / 2, 492, 'HOW TO PLAY', {
+    const howBtn = new MenuButton(this, W / 2, 441, 'HOW TO PLAY', {
       onSelect: () => this.setHelp(!this.help),
     });
-    const labBtn = new MenuButton(this, W / 2, 536, 'BALANCE LAB', {
+    const statsBtn = new MenuButton(this, W / 2, 482, 'STATS GUIDE' , {
+      color: THEME.BLUE,
+      onSelect: () => this.scene.start('StatsGuideScene', { returnTo: 'TitleScene' }),
+    });
+    const labBtn = new MenuButton(this, W / 2, 523, 'BALANCE LAB', {
       color: THEME.GOLD,
       onSelect: () => this.scene.start('BalanceLabScene'),
     });
-    const buttons: MenuButton[] = [primaryBtn, howBtn, labBtn];
+    const careerStatsBtn = new MenuButton(this, W / 2, 564, 'CAREER STATS', {
+      color: THEME.BLUE,
+      onSelect: () => this.scene.start('CareerStatsScene', { returnTo: 'TitleScene' }),
+    });
+    const shopBtn = new MenuButton(this, W / 2, 605, 'ITEM SHOP', {
+      color: THEME.GOLD,
+      onSelect: () => this.scene.start('StoreScene', { returnTo: 'TitleScene' }),
+    });
+    const buttons: MenuButton[] = [primaryBtn, howBtn, statsBtn, labBtn, careerStatsBtn, shopBtn];
     if (hasPlayed) {
-      buttons.push(new MenuButton(this, W / 2, 586, 'WIPE ALL DATA', {
+      buttons.push(new MenuButton(this, W / 2, 646, 'WIPE ALL DATA', {
         color: THEME.RED,
         size: 20,
         onSelect: () => this.confirmWipe(),
@@ -165,6 +179,7 @@ export class TitleScene extends Phaser.Scene {
         this.resetDialog = null;
         resetMetaState();
         clearRunSave();
+        clearCareerStats();
         try {
           for (let i = localStorage.length - 1; i >= 0; i--) {
             const key = localStorage.key(i);
@@ -231,6 +246,16 @@ export class TitleScene extends Phaser.Scene {
       b.phase += (delta / 1000) * 2;
       b.spr.y = 290 + Math.sin(b.phase) * 8;
     }
+  }
+
+  private beginNextYear(): void {
+    resetRun();
+    beginNewYear();
+    addRun();
+    const freshRun = getRun();
+    beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));
+    const intro = yearOpening(getMeta().seasonYear, getWorldState());
+    this.scene.start('DialogueScene', { nextScene: 'ZoneSelectScene', lines: intro.lines, flags: intro.flags });
   }
 
   shutdown(): void {

@@ -60,8 +60,8 @@ describe('averageOverall', () => {
   });
 
   it('averages the members\' overalls (Knuckle Club)', () => {
-    // Pawmot 82, Hitmonchan 76, Grapploct 80, Hariyama 79 -> 317/4 = 79.25 -> 79
-    expect(averageOverall(KNUCKLE_TEAM.players)).toBe(79);
+    // Hitmontop 83, Hitmonchan 76, Grapploct 80, Hariyama 79 -> 318/4 = 79.5 -> 80
+    expect(averageOverall(KNUCKLE_TEAM.players)).toBe(80);
   });
 });
 

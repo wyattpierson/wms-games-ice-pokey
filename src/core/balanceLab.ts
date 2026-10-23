@@ -17,6 +17,8 @@ export interface BalanceMatchSummary {
   goalsFor: number;
   goalsAgainst: number;
   powerIds: string[];
+  /** Permanent-item toggles used for this isolated test match. Optional for older history rows. */
+  itemIds?: string[];
   powerActivations: number;
   activationNames: string[];
 }
@@ -43,7 +45,7 @@ export function balanceSummariesToCsv(rows: readonly BalanceMatchSummary[]): str
   const headers: (keyof BalanceMatchSummary)[] = [
     'date', 'opponentId', 'opponentName', 'playerTeamName', 'result', 'playerScore', 'opponentScore',
     'liveSeconds', 'shots', 'passes', 'jukes', 'parries', 'checks', 'checkHits', 'goalsFor', 'goalsAgainst',
-    'powerIds', 'powerActivations', 'activationNames',
+    'powerIds', 'itemIds', 'powerActivations', 'activationNames',
   ];
   const cell = (value: unknown): string => {
     const text = Array.isArray(value) ? value.join(';') : String(value ?? '');

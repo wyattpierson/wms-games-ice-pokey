@@ -34,6 +34,19 @@ export function perfectWindowHold(): { open: number; close: number } {
   };
 }
 
+/** The Super Shot release window sits strictly inside the normal goalie flash. */
+export function superShotWindowHold(): { open: number; close: number } {
+  return {
+    open: CHARGE_TIME + OVERCHARGE_GRACE * 0.15,
+    close: CHARGE_TIME + OVERCHARGE_GRACE * 0.85,
+  };
+}
+
+export function isSuperShotHold(hold: number): boolean {
+  const { open, close } = superShotWindowHold();
+  return hold >= open && hold <= close;
+}
+
 /** Half the usable goal mouth (px) — aim ±1 lands this far from the centre line. */
 export const AIM_HALF_SPAN = GOAL_H / 2 - AIM_POST_MARGIN;
 

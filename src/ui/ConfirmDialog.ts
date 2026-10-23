@@ -14,7 +14,7 @@ export class ConfirmDialog {
   private cancelLabel: Phaser.GameObjects.Text;
   private bindings: [string, () => void][] = [];
   /** Everything this dialog put on the scene, so destroy() can take ALL of it down again. */
-  private parts: Phaser.GameObjects.GameObject[] = [];
+  private parts: { destroy(): void; setDepth(depth: number): unknown }[] = [];
 
   constructor(
     private scene: Phaser.Scene,

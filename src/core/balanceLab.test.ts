@@ -4,7 +4,7 @@ import { balanceSummariesToCsv, summarizeBalanceMetrics, type BalanceMatchSummar
 const row: BalanceMatchSummary = {
   id: 'one', date: '2026-10-20T12:00:00.000Z', opponentId: 'test', opponentName: 'Team, "A"', playerTeamName: 'Player',
   result: 'win', playerScore: 3, opponentScore: 2, liveSeconds: 90, shots: 8, passes: 5, jukes: 3, parries: 1,
-  checks: 4, checkHits: 2, goalsFor: 3, goalsAgainst: 2, powerIds: ['clean-break'], powerActivations: 2, activationNames: ['Clean Break', 'Clean Break'],
+  checks: 4, checkHits: 2, goalsFor: 3, goalsAgainst: 2, powerIds: ['clean-break'], itemIds: ['super-shot', 'mega-band'], powerActivations: 2, activationNames: ['Clean Break', 'Clean Break'],
 };
 
 describe('Balance Lab metrics', () => {
@@ -16,5 +16,6 @@ describe('Balance Lab metrics', () => {
     expect(csv.startsWith('date,opponentId,opponentName')).toBe(true);
     expect(csv).toContain('"Team, ""A"""');
     expect(csv).toContain('clean-break');
+    expect(csv).toContain('super-shot;mega-band');
   });
 });

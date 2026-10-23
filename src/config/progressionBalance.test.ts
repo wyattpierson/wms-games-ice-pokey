@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { averageOverall, overall } from '../core/poach';
 import { ISLAND_TEAMS, ALL_TEAMS, USER_TEAM } from './teams';
-import { TOWER_STAGES, ZONES, zoneThreatLevel } from './progression';
+import { ITEM_IDS, SHOP_OFFERS, TOWER_STAGES, TIME_COSTS, YEAR_LENGTH_DAYS, ZONES, zoneThreatLevel } from './progression';
 import { TOWER_TEAMS } from './towerTeams';
 
 function zoneTeams(zoneId: string) {
@@ -65,5 +65,29 @@ describe('realm roster progression', () => {
     expect(TOWER_STAGES[0].difficulty).toBe(0.97);
     expect(TOWER_STAGES[0].opponentId).toBe('tower-warden');
     expect(ALL_TEAMS.some(team => team.id === TOWER_STAGES[0].opponentId)).toBe(true);
+  });
+});
+
+
+describe('year calendar costs', () => {
+  it('charges island bosses 100 days and regular matches 20 days', () => {
+    expect(TIME_COSTS.bossMatch).toBe(100);
+    expect(TIME_COSTS.match).toBe(20);
+    expect(TIME_COSTS.islandVisit).toBe(60);
+    expect(YEAR_LENGTH_DAYS).toBe(365);
+  });
+});
+
+
+describe('Item Shop region-resource requirements', () => {
+  it('requires the matching realm resource for special evolution, Mega, and Super Shot items', () => {
+    const byId = new Map(SHOP_OFFERS.map(offer => [offer.id, offer]));
+    expect(byId.get(ITEM_IDS.evolvePikachu)?.requiresResource).toEqual({ zoneId: 'coastal', amount: 1 });
+    expect(byId.get(ITEM_IDS.evolvePsyduck)?.requiresResource).toEqual({ zoneId: 'haunted', amount: 1 });
+    expect(byId.get(ITEM_IDS.superShot)?.requiresResource).toEqual({ zoneId: 'summit', amount: 1 });
+    expect(byId.get(ITEM_IDS.megaEvolution)?.requiresResource).toEqual({ zoneId: 'abyss', amount: 1 });
+    for (const id of [ITEM_IDS.evolvePikachu, ITEM_IDS.evolvePsyduck, ITEM_IDS.superShot, ITEM_IDS.megaEvolution]) {
+      expect(byId.get(id)?.cost).toBeGreaterThan(0);
+    }
   });
 });

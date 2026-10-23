@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planGoalieResponse, readChance, respectAfterFool } from './goalie';
+import { chooseGoalieOutlet, goalieOutletScore, planGoalieResponse, readChance, respectAfterFool } from './goalie';
 import { GOALIE_REPEAT_READ, GOALIE_RESPECT_GAIN, GOALIE_RESPECT_MAX } from '../config/gameplay';
 
 const base = { moveId: 'deke' as const, lastFooled: null, respect: 0, puckSense: 0.5, readBase: 0.3, biteBase: 0.6 };
@@ -61,5 +61,23 @@ describe('respectAfterFool', () => {
   it('adds a fixed amount and caps', () => {
     expect(respectAfterFool(0)).toBeCloseTo(GOALIE_RESPECT_GAIN, 6);
     expect(respectAfterFool(GOALIE_RESPECT_MAX)).toBe(GOALIE_RESPECT_MAX);
+  });
+});
+
+
+describe('goalie outlet selection', () => {
+  const safe = { mate: 'open teammate', distance: 170, forwardProgress: 0.25, closestDefender: 150, passLaneClearance: 80 };
+  const covered = { mate: 'covered teammate', distance: 210, forwardProgress: 0.95, closestDefender: 18, passLaneClearance: 8 };
+
+  it('scores a safe open receiver above a covered receiver even when the covered option is farther forward', () => {
+    expect(goalieOutletScore(safe)).toBeGreaterThan(goalieOutletScore(covered));
+  });
+
+  it('chooses an open receiver even if a covered receiver is more forward', () => {
+    expect(chooseGoalieOutlet([covered, safe])).toEqual(safe);
+  });
+
+  it('holds the puck when every receiver or passing lane is covered', () => {
+    expect(chooseGoalieOutlet([covered])).toBeNull();
   });
 });

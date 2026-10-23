@@ -16,11 +16,11 @@ import {
 } from '../config/gameplay';
 import type { Difficulty } from '../config/difficulty';
 import {
-  CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W,
+  CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W,
 } from '../config/rink';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { ALL_MOVES, lateralSignY, MOVE_DEFS, type MoveId } from '../core/moves';
-import { planGoalieResponse } from '../core/goalie';
+import { chooseGoalieOutlet, planGoalieResponse } from '../core/goalie';
 import { planAiResponse } from '../core/aiPlan';
 import type { Player } from './entities/Player';
 import type { Puck } from './entities/Puck';
@@ -324,24 +324,46 @@ function pickReceiver(p: Player, mates: Player[], rng: () => number): Player | n
 }
 
 function stepGoalie(p: Player, w: AIWorld): void {
+  const gx = p.team === 0 ? ICE_X + p.radius() + 4 : ICE_X + RINK_W - p.radius() - 4;
+  const goalX = p.team === 0 ? ICE_X : ICE_X + RINK_W;
   if (p.carrying) {
-    // Breakout: skate the puck out of the crease, pass once forward.
-    const center = v(CENTER_X, CENTER_Y);
-    const d = sub(center, p.pos);
-    if (len(d) > 30) p.applyInput(norm(d), w.dt);
+    // A goalie is a distributor, not a fourth skater. Stay in the crease and look
+    // for a safe outlet. Never carry the puck toward centre ice: that invited easy
+    // pressure strips and made goalies look as if they were handing the puck away.
+    const home = v(gx, CENTER_Y);
+    const toHome = sub(home, p.pos);
+    if (len(toHome) > 7) p.applyInput(norm(toHome), w.dt, 0.75);
     else p.coast(w.dt);
+
     p.decideTimer -= w.dt;
-    if (p.decideTimer <= 0 && dist(p.pos, center) < 260) {
-      p.decideTimer = 0.6;
+    if (p.decideTimer <= 0) {
+      p.decideTimer = 0.4;
       const mates = w.players.filter((m) => m.team === p.team && !m.isGoalie && !m.down);
-      if (mates.length) {
-        const atkRight = p.team === 0;
-        let best = mates[0];
-        for (const m of mates) {
-          if ((m.pos.x - best.pos.x) * (atkRight ? 1 : -1) > 0) best = m;
-        } // most advanced toward the enemy goal
-        w.pass(p, best);
-      }
+      const defenders = w.players.filter((m) => m.team !== p.team && !m.isGoalie && !m.down);
+      const atkX = p.team === 0 ? 1 : -1;
+      const candidates = mates.map((mate) => {
+        const distance = dist(p.pos, mate.pos);
+        let closestDefender = Infinity;
+        let passLaneClearance = Infinity;
+        const segment = sub(mate.pos, p.pos);
+        const segmentLen2 = Math.max(1, dot(segment, segment));
+        for (const defender of defenders) {
+          closestDefender = Math.min(closestDefender, dist(defender.pos, mate.pos));
+          const rel = sub(defender.pos, p.pos);
+          const t = clamp(dot(rel, segment) / segmentLen2, 0, 1);
+          const closestOnLane = add(p.pos, scale(segment, t));
+          passLaneClearance = Math.min(passLaneClearance, dist(defender.pos, closestOnLane));
+        }
+        if (!Number.isFinite(closestDefender)) closestDefender = 220;
+        if (!Number.isFinite(passLaneClearance)) passLaneClearance = 220;
+        const forwardProgress = distance > 0 ? ((mate.pos.x - p.pos.x) * atkX) / distance : -1;
+        return { mate, distance, closestDefender, passLaneClearance, forwardProgress };
+      }).filter((option) => option.distance >= 55 && option.distance <= 360);
+      // Choose the best of the open outlets, rather than selecting a covered
+      // receiver first and then refusing to pass despite another safe option.
+      const outlet = chooseGoalieOutlet(candidates);
+      // If every passing lane is covered, protect the net and reassess next beat.
+      if (outlet) w.pass(p, outlet.mate);
     }
     return;
   }
@@ -350,8 +372,6 @@ function stepGoalie(p: Player, w: AIWorld): void {
   // the net (shading toward the puck more the closer it is) instead of mirroring it,
   // which left the far corner wide open. When a shot is launched, read where it will
   // cross the line (after a stat-scaled reaction delay) and dive at it.
-  const gx = p.team === 0 ? ICE_X + p.radius() + 4 : ICE_X + RINK_W - p.radius() - 4;
-  const goalX = p.team === 0 ? ICE_X : ICE_X + RINK_W;
   const puck = w.puck;
 
   // --- Skill moves near my net: roll a response ONCE per move (read / bite / hold).

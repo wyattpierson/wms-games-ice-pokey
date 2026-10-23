@@ -6,6 +6,7 @@ import { ALL_TEAMS } from '../config/teams';
 import { startMatch } from '../core/campaign';
 import { getRun, setRun } from '../state/runStore';
 import { getMeta, isTournamentDue } from '../state/metaStore';
+import { resolveWorldZone } from '../core/worldState';
 import { ZONES } from '../config/progression';
 import { towerOpening } from '../config/story';
 import { TextButton } from '../ui/menu';
@@ -25,7 +26,8 @@ export class BattleTowerScene extends Phaser.Scene {
     this.add.text(GAME_WIDTH / 2, 86, `YEAR ${meta.seasonYear} · ${meta.daysRemaining} DAYS REMAINING`, { fontFamily: FONT, fontSize: '15px', color: hex(THEME.RED) }).setOrigin(.5);
 
     if (isTournamentDue()) {
-      const story=towerOpening(meta.seasonYear,ZONES.filter(z=>getRun().results[z.bossId]==='win').length);
+      const clearedBosses = ZONES.map(base => resolveWorldZone(base.id) || base).filter(zone => getRun().results[zone.bossId] === 'win').length;
+      const story = towerOpening(meta.seasonYear, clearedBosses);
       if(!meta.flags.includes(story.flag)){ this.scene.start('DialogueScene',{nextScene:'BattleTowerScene',lines:story.lines,flag:story.flag}); return; }
     }
 
@@ -53,7 +55,7 @@ export class BattleTowerScene extends Phaser.Scene {
       // Keep this year's island clears and recruitment history intact. Tower fights
       // use their own stable team IDs and do not consume or rewrite island results.
       const current = getRun();
-      const state = startMatch(current, team.id);
+      const state = startMatch(current, team.id, { level: stage.difficulty, tournament: true, towerFloor: floor });
       setRun(state);
       this.scene.start('GameScene', { userTeam: state.userTeam, opponent: team, level: stage.difficulty, towerFloor: floor, tournament: true });
     };

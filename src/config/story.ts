@@ -1,57 +1,103 @@
-/** Author narrative here instead of in scene code. Story data is intentionally small and editable. */
-export interface DialogueLine { speaker: string; text: string }
+/** Author narrative here instead of in scene code. Keep beats short, sparse, and easy to extend. */
+import type { WorldStateSnapshot } from '../core/worldState';
+
+export interface DialogueLine {
+  speaker: string;
+  text: string;
+  /** Optional future portrait texture key; omitted for all current story beats. */
+  portraitKey?: string;
+  portraitScale?: number;
+}
 export interface DialogueBeat {
   id: string; when: 'run-start' | 'run-loss' | 'match-before' | 'match-after' | 'island-intro' | 'boss-win' | 'tower-open' | 'year-champion';
   text: string; requiresFlag?: string; requiresNoFlag?: string; setFlag?: string; matchId?: string;
 }
+export interface StoryDialogue {
+  flag: string;
+  /** All flags are committed after the full dialogue completes, or immediately when lines is empty. */
+  flags?: string[];
+  lines: DialogueLine[];
+}
 
-/** The yearly arc repeats its shape, but dialogue changes as the world remembers past years. */
-export function yearOpening(year: number): { flag: string; lines: DialogueLine[] } {
+/**
+ * Annual opening examples:
+ * - Year one has exactly one mysterious opening line.
+ * - Later seasons are silent unless a meaningful saved-world milestone applies.
+ * - Each milestone is a separate, short, copyable conditional beat.
+ */
+export function yearOpening(year: number, world?: WorldStateSnapshot): StoryDialogue {
   const flag = `story-year-${year}-opening`;
-  const lines: DialogueLine[] = year <= 1 ? [
-    { speaker: 'COACH', text: 'The Circuit runs on a calendar. When the last day passes, the Battle Tower opens—and the whole league watches who is ready.' },
-    { speaker: 'YOU', text: 'Four islands, one year. We choose where to spend our time.' },
-    { speaker: 'COACH', text: 'And every boss guards something the shop can’t get anywhere else. Make this season count.' },
-  ] : [
-    { speaker: 'COACH', text: `Year ${year}. The Circuit remembers last season, even if the roster changes and the standings reset.` },
-    { speaker: 'YOU', text: 'Then we do it differently this time. More bosses, better preparation, or a straight shot at the Tower.' },
-    { speaker: 'UNKNOWN SIGNAL', text: year === 2 ? 'The signal from the Tower has returned. It was not part of the official broadcast.' : `The signal is stronger now. Someone—or something—inside the Tower knows you keep coming back.` },
-  ];
-  return { flag, lines };
+  const lines: DialogueLine[] = year === 1
+    ? [{ speaker: 'UNKNOWN', text: 'Your first year begins. The Tower is listening.' }]
+    : [];
+  const flags = [flag];
+
+  if (world?.bestTowerFloor && world.bestTowerFloor > 0) {
+    lines.push({
+      speaker: 'UNKNOWN',
+      text: `You reached ${world.bestTowerFloor} Tower team${world.bestTowerFloor === 1 ? '' : 's'}. The next one is waiting.`,
+    });
+  }
+  if (world?.allZonesClearedEver) {
+    lines.push({ speaker: 'YOU', text: 'Every realm has fallen once. What is the Tower hiding?' });
+  }
+  if (world && world.starterStage > 0 && world.starterName) {
+    lines.push({ speaker: world.starterName.toUpperCase(), text: 'I have changed. Something below is waiting.' });
+  }
+  if (world?.activeEventIds.includes('galarian-legendary-flyers') && !world.flags.includes('world-event-seen-galarian-legendary-flyers')) {
+    lines.push({ speaker: 'UNKNOWN', text: 'The birds have changed. So has the world.' });
+    flags.push('world-event-seen-galarian-legendary-flyers');
+  }
+  return { flag, flags, lines };
 }
 
-export function islandOpening(zoneName: string, year: number): DialogueLine[] {
-  return [
-    { speaker: 'SCOUT', text: `${zoneName}. Every island has its own circuit, and the boss holds a resource unique to this place.` },
-    { speaker: 'COACH', text: year > 1 ? `We have been here before. This year, we decide whether the prize is worth the days.` : 'We cannot play every match before the year ends. Pick your fights.' },
-  ];
+/** Most island visits are intentionally silent. Add a zone-specific beat here when one is ready. */
+export function islandOpening(_zoneName: string, _year: number): DialogueLine[] {
+  return [];
 }
 
-export function bossVictory(zoneName: string, resourceName: string, year: number): DialogueLine[] {
-  return [
-    { speaker: 'COACH', text: `${zoneName}'s boss is down. That makes this island's ${resourceName} ours.` },
-    { speaker: 'SCOUT', text: 'The Locker Room can use these for special offers. The resource stays with you between years.' },
-    { speaker: 'UNKNOWN SIGNAL', text: year === 1 ? 'One island cleared. The Tower’s signal changes as each boss falls.' : `Year ${year}: another boss defeated. The signal from the Tower answers again.` },
-  ];
+/** One-time, save-wide first visit to The Abyss. */
+export function abyssFirstVisit(): DialogueLine[] {
+  return [{ speaker: 'UNKNOWN', text: 'The fog moves against the wind. Something below knows your name.' }];
 }
 
-export function towerOpening(year: number, bossesDefeated: number): { flag: string; lines: DialogueLine[] } {
-  return { flag: `story-year-${year}-tower-open`, lines: [
-    { speaker: 'ANNOUNCER', text: `The calendar is out. Year ${year}'s Battle Tower is open.` },
-    { speaker: 'COACH', text: `${bossesDefeated} island boss${bossesDefeated === 1 ? '' : 'es'} defeated this year. Whatever we missed out there, we carry into the ladder.` },
-    { speaker: 'UNKNOWN SIGNAL', text: 'You made it to the Tower again. Come find out who has been calling.' },
-  ] };
+/** Short reward aftermath. The second-Coastal victory beat can replace this with a rarer line. */
+export function bossVictory(zoneName: string, resourceName: string, _year: number, reward: 'resource' | 'recruit' | 'skipped' = 'resource'): DialogueLine[] {
+  if (reward === 'resource') return [{ speaker: 'UNKNOWN', text: `${zoneName} is quiet now. The resource is yours.` }];
+  if (reward === 'recruit') return [{ speaker: 'UNKNOWN', text: 'You took one of theirs. The resource remains.' }];
+  return [{ speaker: 'UNKNOWN', text: `You left the ${resourceName}. It will wait.` }];
 }
 
-export function yearChampion(year: number): { flag: string; lines: DialogueLine[] } {
-  return { flag: `story-year-${year}-champion`, lines: [
-    { speaker: 'ANNOUNCER', text: `The Battle Tower has a champion for Year ${year}. The Circuit has a new name to remember.` },
-    { speaker: 'COACH', text: 'We made it through the year. The roster, the resources, the islands we chose—all of it brought us here.' },
-    { speaker: 'UNKNOWN SIGNAL', text: 'Enjoy the win. The signal was never coming from the stands. It is coming from below the Tower.' },
-  ] };
+/** Fires exactly on the second all-time win against Coastal Circuit's boss. */
+export function secondCoastalBossVictory(): DialogueLine[] {
+  return [{ speaker: 'YOU', text: 'Last time, we survived. This time, we knew what to do.' }];
 }
 
+export function towerOpening(year: number, bossesDefeated: number): StoryDialogue {
+  return {
+    flag: `story-year-${year}-tower-open`,
+    lines: [{ speaker: 'UNKNOWN', text: `Year ${year}. ${bossesDefeated} boss${bossesDefeated === 1 ? '' : 'es'} down. The Tower noticed.` }],
+  };
+}
+
+/** Called when the year ends below its starting Tower record. */
+export function yearEndReflection(world: WorldStateSnapshot): StoryDialogue | undefined {
+  if (world.yearStartingBestTowerFloor <= 0 || world.towerFloor >= world.yearStartingBestTowerFloor) return undefined;
+  return {
+    flag: `story-year-${world.year}-fell-short-of-record`,
+    lines: [{ speaker: 'YOU', text: 'I chased the old record and lost sight of the next shift.' }],
+  };
+}
+
+export function yearChampion(year: number): StoryDialogue {
+  return {
+    flag: `story-year-${year}-champion`,
+    lines: [{ speaker: 'UNKNOWN', text: `Year ${year} ends. The signal came from below the Tower.` }],
+  };
+}
+
+/** Small templates for future story triggers. Actual one-off logic lives in the named functions above. */
 export const STORY_BEATS: DialogueBeat[] = [
-  { id: 'first-call', when: 'run-start', text: 'Coach: The Circuit is bigger than one rink. Keep your head up, and keep moving.' },
-  { id: 'first-loss', when: 'run-loss', text: 'Coach: A bad night is still data. The next year starts with what you learned.' },
+  { id: 'first-call', when: 'run-start', text: 'UNKNOWN: The Tower is listening.', requiresNoFlag: 'story-first-call-shown', setFlag: 'story-first-call-shown' },
+  { id: 'first-loss', when: 'run-loss', text: 'YOU: I should have seen that coming.', requiresNoFlag: 'story-first-loss-shown', setFlag: 'story-first-loss-shown' },
 ];

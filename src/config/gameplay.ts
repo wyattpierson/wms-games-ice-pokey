@@ -71,6 +71,8 @@ export const TUMBLE_TIME = 0.5; // s of tumble anim after a whiff / knockback
 // The tell for the shooter is the enemy goalie flashing white while in the zone.
 export const PERFECT_SHOT_CHARGE = 0.8;
 export const PERFECT_SHOT_MULT = 1.18;
+/** Tighter timing window for the permanent Super Shot unlock. */
+export const SUPER_SHOT_MULT = 1.52;
 // The perfect zone is a WINDOW, not "hold long enough": after reaching full charge
 // you get OVERCHARGE_GRACE seconds at full, then the charge bleeds away at
 // OVERCHARGE_DECAY per second (dropping back under PERFECT_SHOT_CHARGE ends the window).
@@ -128,7 +130,8 @@ export const CARRY_SPEED_FACTOR = 0.9;
 
 // Possession PRESSURE. A carrier who just skates with a defender on top of them
 // slowly loses the puck: the meter fills while an opposing skater is within
-// PRESSURE_RANGE, drains when nobody is, and resets on a pass / shot / juke.
+// PRESSURE_RANGE, drains when nobody is, and resets on a pass / shot / successfully landed juke.
+// Move windups keep pressure; a stuffed move does not earn a reset.
 // At 1.0 the puck is stripped loose toward the presser. A check adds to it.
 export const PRESSURE_RANGE = 58; // px (centre to centre) at which a skater counts as pressing
 export const PRESSURE_FILL_TIME = 1.6; // s one in-front presser needs to strip a standing carrier

@@ -9,14 +9,14 @@ export const STARTER_EVOLUTIONS: Record<'larvitar'|'gible'|'bagon', { name: stri
 /** Data-first campaign progression. Add zones, tower stages, dialogue beats and shop offers here. */
 export const YEAR_LENGTH_DAYS = 365;
 /** Tune these costs to control how many activities fit before tournament day. */
-export const TIME_COSTS = { islandVisit: 60, match: 20, towerFloor: 0 } as const;
+export const TIME_COSTS = { islandVisit: 60, match: 20, bossMatch: 100, towerFloor: 0 } as const;
 
-export interface ZoneDefinition { id: string; name: string; theme: string; description: string; difficulty: number; opponents: string[]; bossId: string; resourceName: string; resourceDescription: string }
+export interface ZoneDefinition { id: string; name: string; theme: string; description: string; difficulty: number; opponents: string[]; bossId: string; resourceName: string; resourceUnitName: string; resourceDescription: string }
 export const ZONES: ZoneDefinition[] = [
-  { id: 'coastal', name: 'COASTAL CIRCUIT', theme: 'Wind, salt, and speed', description: 'An approachable opener with fast skaters, scrappy bruisers, and the Legendary Birds waiting at the end.', difficulty: 0.05, opponents: ['knuckle-club-coastal','grave-diggers-coastal','sparkle-squad-coastal'], bossId: 'sky-raiders-coastal', resourceName: 'Tideglass', resourceDescription: 'Polished fragments charged by the island tides.' },
-  { id: 'haunted', name: 'HAUNTED RINKS', theme: 'Cold lights. Colder ghosts.', description: 'Ghosts and dark types trade speed for tricks, special attack, and sturdy defenses.', difficulty: 0.30, opponents: ['knuckle-club-haunted','grave-diggers-haunted','sparkle-squad-haunted'], bossId: 'sky-raiders-haunted', resourceName: 'Echo Shards', resourceDescription: 'Crystallized echoes found beneath the haunted rinks.' },
-  { id: 'summit', name: 'SUMMIT LEAGUE', theme: 'Thin air, elite teams', description: 'High-altitude specialists hit harder and defend better; the ancient Titans rule the summit.', difficulty: 0.56, opponents: ['knuckle-club-summit','grave-diggers-summit','sparkle-squad-summit'], bossId: 'sky-raiders-summit', resourceName: 'Summit Crests', resourceDescription: 'Rare crests awarded by the high-altitude circuits.' },
-  { id: 'abyss', name: 'THE ABYSS', theme: 'The end of the line', description: 'Late-game favorites, elite speedsters, and legendary forces push every stat to its limit.', difficulty: 0.76, opponents: ['knuckle-club-abyss','grave-diggers-abyss','sparkle-squad-abyss'], bossId: 'sky-raiders-abyss', resourceName: 'Abyss Cores', resourceDescription: 'Dense cores recovered from the deepest waters.' },
+  { id: 'coastal', name: 'COASTAL CIRCUIT', theme: 'Wind, salt, and speed', description: 'An approachable opener with fast skaters, scrappy bruisers, and the Legendary Birds waiting at the end.', difficulty: 0.05, opponents: ['knuckle-club-coastal','grave-diggers-coastal','sparkle-squad-coastal'], bossId: 'sky-raiders-coastal', resourceName: 'Tideglass', resourceUnitName: 'Tideglass', resourceDescription: 'Polished fragments charged by the island tides.' },
+  { id: 'haunted', name: 'HAUNTED RINKS', theme: 'Cold lights. Colder ghosts.', description: 'Ghosts and dark types trade speed for tricks, special attack, and sturdy defenses.', difficulty: 0.30, opponents: ['knuckle-club-haunted','grave-diggers-haunted','sparkle-squad-haunted'], bossId: 'sky-raiders-haunted', resourceName: 'Echo Shards', resourceUnitName: 'Echo Shard', resourceDescription: 'Crystallized echoes found beneath the haunted rinks.' },
+  { id: 'summit', name: 'SUMMIT LEAGUE', theme: 'Thin air, elite teams', description: 'High-altitude specialists hit harder and defend better; the ancient Titans rule the summit.', difficulty: 0.56, opponents: ['knuckle-club-summit','grave-diggers-summit','sparkle-squad-summit'], bossId: 'sky-raiders-summit', resourceName: 'Summit Crests', resourceUnitName: 'Summit Crest', resourceDescription: 'Rare crests awarded by the high-altitude circuits.' },
+  { id: 'abyss', name: 'THE ABYSS', theme: 'The end of the line', description: 'Late-game favorites, elite speedsters, and legendary forces push every stat to its limit.', difficulty: 0.76, opponents: ['knuckle-club-abyss','grave-diggers-abyss','sparkle-squad-abyss'], bossId: 'sky-raiders-abyss', resourceName: 'Abyss Cores', resourceUnitName: 'Abyss Core', resourceDescription: 'Dense cores recovered from the deepest waters.' },
 ];
 /**
  * Each island's difficulty is the starting AI level for that realm. Wins inside
@@ -39,13 +39,42 @@ export const TOWER_STAGES = Array.from({ length: 12 }, (_, i) => ({
   difficulty: towerDifficulty[i],
   opponentId: towerOpponents[i % towerOpponents.length],
 }));
-export interface ShopOffer { id: string; name: string; kind: 'item'|'ability'; cost: number; description: string; unlock?: string; requiresResource?: { zoneId: string; amount: number } }
+export interface ShopOffer {
+  id: string;
+  name: string;
+  kind: 'item'|'ability';
+  cost: number;
+  description: string;
+  unlock?: string;
+  requiresResource?: { zoneId: string; amount: number };
+  /** Keep this offer mysterious until the selected starter reaches its final evolution. */
+  requiresStarterFinalEvolution?: boolean;
+}
+
+/** Stable save-file IDs for the permanent Item Shop unlocks. */
+export const ITEM_IDS = {
+  evolvePikachu: 'evolve-pikachu',
+  evolvePsyduck: 'evolve-psyduck',
+  secondChance: 'second-chance-charm',
+  megaEvolution: 'mega-band',
+  superParry: 'super-parry',
+  superJuke: 'super-juke',
+  superShot: 'super-shot',
+} as const;
+
 export const SHOP_OFFERS: ShopOffer[] = [
-  { id: 'power-shot', name: 'POWER SHOT', kind: 'ability', cost: 12, description: 'A permanent unlock slot for a future shot modifier.', unlock: 'power-shot' },
-  
-  { id: 'tape', name: 'STICK TAPE', kind: 'item', cost: 5, description: 'Prototype item; effect hook reserved for later.' },
-  { id: 'tideglass-charm', name: 'TIDEGLASS CHARM', kind: 'item', cost: 8, description: 'Prototype island-gated offer; its gameplay effect is a placeholder.', requiresResource: { zoneId: 'coastal', amount: 1 } },
-  { id: 'echo-lining', name: 'ECHO LINING', kind: 'item', cost: 8, description: 'Prototype island-gated offer; its gameplay effect is a placeholder.', requiresResource: { zoneId: 'haunted', amount: 1 } },
-  { id: 'summit-lace', name: 'SUMMIT LACE', kind: 'item', cost: 8, description: 'Prototype island-gated offer; its gameplay effect is a placeholder.', requiresResource: { zoneId: 'summit', amount: 1 } },
-  { id: 'abyss-core', name: 'ABYSS CORE', kind: 'item', cost: 8, description: 'Prototype island-gated offer; its gameplay effect is a placeholder.', requiresResource: { zoneId: 'abyss', amount: 1 } },
+  { id: ITEM_IDS.evolvePikachu, name: 'THUNDER STONE', kind: 'item', cost: 12, unlock: ITEM_IDS.evolvePikachu, requiresResource: { zoneId: 'coastal', amount: 1 },
+    description: 'Permanently evolves your starting Pikachu into Raichu in this save and every future run.' },
+  { id: ITEM_IDS.evolvePsyduck, name: 'GOLDUCK TRAINING KIT', kind: 'item', cost: 12, unlock: ITEM_IDS.evolvePsyduck, requiresResource: { zoneId: 'haunted', amount: 1 },
+    description: 'Permanently evolves your starting Psyduck into Golduck in this save and every future run.' },
+  { id: ITEM_IDS.secondChance, name: 'SECOND CHANCE CHARM', kind: 'item', cost: 20, unlock: ITEM_IDS.secondChance,
+    description: 'Once per run, retry a match after a loss. The rematch is your one use for that run.' },
+  { id: ITEM_IDS.megaEvolution, name: 'MEGA BAND', kind: 'item', cost: 26, unlock: ITEM_IDS.megaEvolution, requiresStarterFinalEvolution: true, requiresResource: { zoneId: 'abyss', amount: 1 },
+    description: 'In a match, press M to Mega Evolve your fully evolved starter. Its Mega form and stats last until the next goal.' },
+  { id: ITEM_IDS.superParry, name: 'SUPER PARRY MANUAL', kind: 'item', cost: 16, unlock: ITEM_IDS.superParry,
+    description: 'A successful parry still steals the puck, and now knocks the attacker out for 5 seconds.' },
+  { id: ITEM_IDS.superJuke, name: 'AFTERIMAGE CLEATS', kind: 'item', cost: 16, unlock: ITEM_IDS.superJuke,
+    description: 'A close defender who fails to stop your juke gets knocked behind you and left staggered.' },
+  { id: ITEM_IDS.superShot, name: 'SNIPER’S SIGHT', kind: 'item', cost: 16, unlock: ITEM_IDS.superShot, requiresResource: { zoneId: 'summit', amount: 1 },
+    description: 'A shorter SUPER SHOT window appears inside the goalie’s regular shot flash for a much stronger shot.' },
 ];

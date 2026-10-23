@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHARGE_TIME, ONE_TIMER_MULT, OVERCHARGE_GRACE, PERFECT_SHOT_CHARGE, PERFECT_SHOT_MULT } from '../config/gameplay';
 import { CENTER_X, CENTER_Y, GOAL_BOTTOM, GOAL_TOP, ICE_X, ICE_Y, RINK_H, RINK_W } from '../config/rink';
-import { aimTargetY, chargeFromHold, perfectWindowHold, shotDirection } from './shot';
+import { aimTargetY, chargeFromHold, isSuperShotHold, perfectWindowHold, shotDirection, superShotWindowHold } from './shot';
 import { v } from './vec2';
 
 describe('chargeFromHold', () => {
@@ -40,6 +40,17 @@ describe('perfect window', () => {
     const { open, close } = perfectWindowHold();
     expect(close - open).toBeGreaterThan(0.25);
     expect(close - open).toBeLessThan(0.6);
+  });
+  it('puts Super Shot inside the regular perfect window with tighter timing', () => {
+    const normal = perfectWindowHold();
+    const superShot = superShotWindowHold();
+    expect(superShot.open).toBeGreaterThan(normal.open);
+    expect(superShot.close).toBeLessThan(normal.close);
+    expect(superShot.close - superShot.open).toBeLessThan(normal.close - normal.open);
+    expect(isSuperShotHold(superShot.open)).toBe(true);
+    expect(isSuperShotHold(superShot.close)).toBe(true);
+    expect(isSuperShotHold(superShot.open - 0.01)).toBe(false);
+    expect(isSuperShotHold(superShot.close + 0.01)).toBe(false);
   });
 });
 

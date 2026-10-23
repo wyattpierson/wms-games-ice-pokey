@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
+import { getWorldState } from '../core/worldState';
 import { addRetroChrome } from '../ui/chrome';
 import { GAME_WIDTH } from '../config/rink';
-import { beginNewYear, chooseStarter, type StarterId } from '../state/metaStore';
+import { beginNewYear, chooseStarter, getMeta, type StarterId } from '../state/metaStore';
 import { getRun, resetRun, setRun } from '../state/runStore';
 import { yearOpening } from '../config/story';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
+import { beginCareerRun } from '../state/careerStatsStore';
 const STARTERS: { id: StarterId; name: string; sprite: number; desc: string }[] = [
   { id: 'larvitar', name: 'LARVITAR', sprite: 246, desc: 'The stubborn bruiser' },
   { id: 'gible', name: 'GIBLE', sprite: 443, desc: 'The hungry playmaker' },
@@ -35,6 +37,6 @@ export class StarterSelectScene extends Phaser.Scene {
     });
     const onKey=(e:KeyboardEvent)=>{ if(e.code==='Digit1'||e.code==='Numpad1')this.pick('larvitar'); if(e.code==='Digit2'||e.code==='Numpad2')this.pick('gible'); if(e.code==='Digit3'||e.code==='Numpad3')this.pick('bagon'); }; this.onKey=onKey; window.addEventListener('keydown',onKey);
   }
-  private pick(id:StarterId):void { const entered = window.prompt('Name your team', 'Puck Masters'); if (entered === null) return; const teamName = entered.trim().slice(0, 24) || 'Puck Masters'; chooseStarter(id); beginNewYear(); resetRun(); const run = getRun(); setRun({ ...run, userTeam: { ...run.userTeam, name: teamName } }); const intro=yearOpening(1); this.scene.start('DialogueScene', { nextScene: 'ZoneSelectScene', lines: intro.lines, flag: intro.flag }); }
+  private pick(id:StarterId):void { const entered = window.prompt('Name your team', 'Puck Masters'); if (entered === null) return; const teamName = entered.trim().slice(0, 24) || 'Puck Masters'; chooseStarter(id); beginNewYear(); resetRun(); const run = getRun(); setRun({ ...run, userTeam: { ...run.userTeam, name: teamName } }); const namedRun = getRun(); beginCareerRun(teamName, getMeta().seasonYear, namedRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie }))); const intro=yearOpening(getMeta().seasonYear, getWorldState()); this.scene.start('DialogueScene', { nextScene: 'ZoneSelectScene', lines: intro.lines, flags: intro.flags }); }
   shutdown():void { if(this.onKey)window.removeEventListener('keydown',this.onKey); this.onKey=null; }
 }

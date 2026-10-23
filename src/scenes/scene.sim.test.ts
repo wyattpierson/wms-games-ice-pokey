@@ -43,6 +43,7 @@ vi.mock('phaser', () => {
 
 import { difficultyAt } from '../config/difficulty';
 import { MOVE_DEFS, windowSeconds } from '../core/moves';
+import { ACTION_KEYS } from '../config/bindings';
 import * as C from '../config/gameplay';
 import { OPPONENTS, USER_TEAM } from '../config/teams';
 import { GameScene } from './GameScene';
@@ -466,11 +467,17 @@ describe('parry cone: you must be in FRONT of the carrier', () => {
       expect(def.stagger).toBeGreaterThan(0.2);
     }
   });
-  it('the cone on the tell is white when you are inside it and red when you are not', () => {
+  it('the cone visibility status never changes the move colour, and the counter key remains visible', () => {
     const front = setup(-45, 10), side = setup(0, 45);
     step(front.s, 2); step(side.s, 2);
     expect(front.car.tellHint?.inCone).toBe(true);
     expect(side.car.tellHint?.inCone).toBe(false);
+    expect(front.car.tellHint?.showKey).toBe(true);
+    expect(side.car.tellHint?.showKey).toBe(true);
+    expect(MOVE_DEFS.spin.color).toBe(0xff9f1c); // orange + E
+    expect(ACTION_KEYS.spin[0]).toBe('E');
+    expect(MOVE_DEFS.deke.color).toBe(0xffd60a); // yellow + F
+    expect(ACTION_KEYS.deke[0]).toBe('F');
   });
   it('the AI is bound by the same cone (a mispositioned AI defender whiffs)', () => {
     // AI defender BESIDE the user's carrier, parrying at the right moment
@@ -484,6 +491,27 @@ describe('parry cone: you must be in FRONT of the carrier', () => {
     // Pin the AI beside the carrier (otherwise its normal shadowing walks it INTO the cone, legitimately).
     for (let i = 0; i < 90; i++) { ai.pos = { x: 500, y: 345 }; ai.vel = { x: 0, y: 0 }; step(s); if (s.puck.carriedBy === ai) parried++; }
     expect(parried).toBe(0);
+  });
+});
+
+describe('defender switching is explicit', () => {
+  it('keeps the currently controlled defender even when another teammate becomes closer; SPACE switches', () => {
+    releaseAll();
+    const { s } = makeScene(0);
+    const def = s.players[0], teammate = s.players[1], car = s.players[4];
+    unfreeze(def, 640, 336); unfreeze(teammate, 900, 120); unfreeze(car, 690, 336); car.facing = Math.PI;
+    teammate.stagger = 999;
+    s.grantPuck(car);
+    step(s, 1);
+    expect(s.controlled).toBe(def);
+
+    // The teammate becomes the closest defender, but selection remains stable.
+    pin(teammate, 692, 336);
+    step(s, 3);
+    expect(s.controlled).toBe(def);
+
+    press('SPACE'); step(s); release('SPACE');
+    expect(s.controlled).toBe(teammate);
   });
 });
 
@@ -1016,7 +1044,7 @@ describe('possession pressure: a passive carrier loses the puck', () => {
     expect(s.puck.carriedBy).toBe(me);
   });
 
-  it('DOING something resets it: a pass, or starting a juke', () => {
+  it('a pass resets pressure, but a juke only resets it once the move lands', () => {
     const a = standoff(1);
     for (let i = 0; i < 70; i++) a.tick();
     expect(a.me.pressure).toBeGreaterThan(0.4);
@@ -1029,9 +1057,31 @@ describe('possession pressure: a passive carrier loses the puck', () => {
     expect(b.me.pressure).toBeGreaterThan(0.4);
     press('E'); b.tick(); release('E');
     expect(b.me.move).toBe('spin');
-    expect(b.me.pressure).toBe(0);
-    for (let i = 0; i < 12; i++) b.tick();
-    expect(b.me.pressure).toBe(0); // …and it stays 0 for the whole juke
+    expect(b.me.pressure).toBeGreaterThan(0.4); // starting the tell is not an escape
+    for (let i = 0; i < 60 && b.me.move; i++) b.tick();
+    expect(b.me.pressure).toBeLessThan(0.3); // the landed move gets separation and clears the carry penalty
+  });
+
+  it('a pre-planted check stuffs a pressured opponent juke without clearing the meter; they can still be stripped', () => {
+    releaseAll();
+    const { s, popups } = makeScene(1);
+    const def = s.players[0], carrier = s.players[4];
+    unfreeze(def, 640, 336); unfreeze(carrier, 684, 336); carrier.facing = Math.PI;
+    s.grantPuck(carrier); s.puck.update(0.016);
+    carrier.moveCd = 0;
+    expect(carrier.startMove('spin', 1, def.pos)).toBe(true);
+    carrier.moveCd = 99;
+    carrier.pressure = 0.78;
+    def.guardT = 2;
+    def.guardStart = s.clock - 1; // already planted before the tell
+    let resolvedBlocked = false;
+    for (let i = 0; i < 90 && s.puck.carriedBy === carrier; i++) {
+      step(s);
+      if (popups.includes('BLOCKED')) resolvedBlocked = true;
+    }
+    expect(resolvedBlocked).toBe(true);
+    expect(popups).toContain('STRIPPED!');
+    expect(s.puck.carriedBy).not.toBe(carrier);
   });
 
   it('it drains when the defender backs off', () => {

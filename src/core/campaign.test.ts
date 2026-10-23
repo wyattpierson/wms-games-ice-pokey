@@ -9,6 +9,7 @@ import {
   isResumable,
   newRun,
   recordResult,
+  retryLastMatch,
   sidePlayers,
   skipPoach,
   startMatch,
@@ -91,6 +92,22 @@ describe('startMatch / abandonMatch', () => {
   it('abandoning with no match in progress is a no-op (same state)', () => {
     const s = newRun();
     expect(abandonMatch(s)).toBe(s);
+  });
+});
+
+describe('Second Chance Charm retry state', () => {
+  it('replays the same match once, restoring match-start results and roster', () => {
+    const before = startMatch(newRun(), KNUCKLE, { level: 0.62, tournament: false });
+    const lost = recordResult(before, KNUCKLE, 'loss');
+    expect(lost.gameOver).toBe(true);
+    const retried = retryLastMatch(lost);
+    expect(retried.gameOver).toBe(false);
+    expect(retried.matchInProgress).toBe(KNUCKLE);
+    expect(retried.results[KNUCKLE]).toBeUndefined();
+    expect(retried.userTeam.players.map(p => p.name)).toEqual(before.userTeam.players.map(p => p.name));
+    expect(retried.retryUsed).toBe(true);
+    expect(retried.retrySnapshot).toBeUndefined();
+    expect(() => retryLastMatch(retried)).toThrow('No match retry remains');
   });
 });
 

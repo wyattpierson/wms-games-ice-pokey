@@ -15,6 +15,8 @@ import { LineupScene } from './scenes/LineupScene';
 import { BattleTowerScene } from './scenes/BattleTowerScene';
 import { DialogueScene } from './scenes/DialogueScene';
 import { BalanceLabScene } from './scenes/BalanceLabScene';
+import { StatsGuideScene } from './scenes/StatsGuideScene';
+import { CareerStatsScene } from './scenes/CareerStatsScene';
 
 // Dev deep-link: ?renderer=canvas forces the canvas renderer (for pixel tests).
 const params = new URLSearchParams(window.location.search);
@@ -44,7 +46,7 @@ class Preloader extends Phaser.Scene {
     for (const t of [USER_TEAM, ...ALL_TEAMS]) {
       for (const p of t.players) seen.add(p.sprite);
     }
-    for (const id of [246, 247, 248, 443, 444, 445, 371, 372, 373, ...seen]) {
+    for (const id of [246, 247, 248, 443, 444, 445, 371, 372, 373, ...seen, 26, 55, 10049, 10058, 10089, 10169, 10170, 10171]) {
       this.load.image(
         `pkm-${id}`,
         `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`,
@@ -82,6 +84,8 @@ const game = new Phaser.Game({
   scene: [
     Preloader,
     TitleScene,
+    StatsGuideScene,
+    CareerStatsScene,
     StarterSelectScene,
     DialogueScene,
     BalanceLabScene,

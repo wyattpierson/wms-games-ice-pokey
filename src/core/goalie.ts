@@ -15,6 +15,37 @@ import type { MoveId } from './moves';
 
 export type GoalieStance = 'read' | 'bite' | 'hold';
 
+/** Inputs used to rank a goalie breakout option. Clearance distances are in rink pixels. */
+export interface GoalieOutletOption {
+  distance: number;
+  /** Forward progress toward the opposing goal, normalized to -1..1. */
+  forwardProgress: number;
+  closestDefender: number;
+  passLaneClearance: number;
+}
+
+/** Deterministic outlet score: safety matters more than moving up-ice quickly. */
+export function goalieOutletScore(option: GoalieOutletOption): number {
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+  const openReceiver = clamp01(option.closestDefender / 160);
+  const clearLane = clamp01(option.passLaneClearance / 90);
+  const forward = clamp01((option.forwardProgress + 1) / 2);
+  const manageableRange = 1 - clamp01((option.distance - 80) / 320);
+  return openReceiver * 0.42 + clearLane * 0.33 + forward * 0.17 + manageableRange * 0.08;
+}
+
+/** Pick the highest-scoring outlet among genuinely safe passing options. */
+export function chooseGoalieOutlet<T extends GoalieOutletOption>(
+  options: readonly T[],
+  minReceiverClearance = 42,
+  minPassLaneClearance = 22,
+): T | null {
+  return options
+    .filter((option) => option.closestDefender >= minReceiverClearance && option.passLaneClearance >= minPassLaneClearance)
+    .slice()
+    .sort((a, b) => goalieOutletScore(b) - goalieOutletScore(a))[0] ?? null;
+}
+
 export interface GoalieReadInput {
   moveId: MoveId;
   /** The move that fooled this goalie last (null if none / forgotten). */

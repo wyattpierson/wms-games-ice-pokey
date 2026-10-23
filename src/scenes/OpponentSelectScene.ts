@@ -8,9 +8,9 @@ import { getRun, setRun } from '../state/runStore';
 import { TextButton, hex, rosterStrip } from '../ui/menu';
 import { FILL, FONT, THEME } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
-import { ZONES, zoneThreatLevel } from '../config/progression';
+import { TIME_COSTS, ZONES, zoneThreatLevel } from '../config/progression';
 import { getMeta, spendDays } from '../state/metaStore';
-import { TIME_COSTS } from '../config/progression';
+import { resolveWorldZone } from '../core/worldState';
 
 // ---- layout (the stage is 1192 × 672) ----
 const CARD_W = 270;
@@ -59,7 +59,7 @@ export class OpponentSelectScene extends Phaser.Scene {
     wireShutdown(this);
     const W = GAME_WIDTH;
     const state = getRun();
-    if (getMeta().daysRemaining <= 0) { this.scene.start('ZoneSelectScene'); return; }
+    if (getMeta().daysRemaining <= 0 && !getMeta().activeIslandId) { this.scene.start('ZoneSelectScene'); return; }
 
     // A poach that was earned but never resolved (e.g. the page was refreshed on the poach
     // screen) is resumed rather than silently lost.
@@ -70,7 +70,8 @@ export class OpponentSelectScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.BLUE);
-    const zone = ZONES.find(z => z.id === getMeta().selectedZoneId) || ZONES[0];
+    const currentMeta = getMeta();
+    const zone = resolveWorldZone(currentMeta.activeIslandId || currentMeta.selectedZoneId) || ZONES[0];
     this.add.text(W / 2, 38, zone.name, T(30, THEME.WHITE)).setOrigin(0.5);
     const islandTeams = [...zone.opponents, zone.bossId].map(id => teamById(id));
     const regulars = islandTeams.length;
@@ -110,7 +111,7 @@ export class OpponentSelectScene extends Phaser.Scene {
           if (this.focus >= 0 && this.cards[this.focus].available) this.launch(this.cards[this.focus].team.id);
           break;
         case 'Escape':
-          this.scene.start('TitleScene');
+          this.scene.start('ZoneSelectScene');
           break;
       }
     };
@@ -122,13 +123,15 @@ export class OpponentSelectScene extends Phaser.Scene {
 
   private buildCard(i: number, team: Team, ownOvr: number): void {
     const state = getRun();
-    const zone = ZONES.find(z => z.id === getMeta().selectedZoneId) || ZONES[0];
+    const currentMeta = getMeta();
+    const zone = resolveWorldZone(currentMeta.activeIslandId || currentMeta.selectedZoneId) || ZONES[0];
     const cx = CARD_LEFT + i * (CARD_W + CARD_GAP) + CARD_W / 2;
     const cy = CARD_TOP + CARD_H / 2;
     const champion = isChampion(team.id);
     const boss = isIslandBoss(team.id);
     const result = state.results[team.id];
-    const available = !result;
+    const outOfTime = getMeta().daysRemaining <= 0 && getMeta().activeIslandId === zone.id && team.id !== zone.bossId;
+    const available = !result && !outOfTime;
     this.cards.push({ team, cx, cy, available });
 
     const card = this.add.container(cx, cy);
@@ -151,6 +154,9 @@ export class OpponentSelectScene extends Phaser.Scene {
     } else if (result === 'win') {
       status = '✓ DEFEATED';
       statusColor = THEME.GRAY;
+    } else if (outOfTime) {
+      status = 'TIME EXPIRED';
+      statusColor = THEME.RED;
     } else if (boss) {
       status = 'ISLAND BOSS';
       statusColor = THEME.RED;
@@ -170,7 +176,8 @@ export class OpponentSelectScene extends Phaser.Scene {
       const vs = gap === 0 ? 'even with your team' : `${gap > 0 ? '+' : '−'}${Math.abs(gap)} vs your team`;
       put(this.add.text(0, -CARD_H / 2 + 232, vs, T(12, gap > 0 ? THEME.RED : gap < 0 ? THEME.GREEN : THEME.GRAY)).setOrigin(0.5));
 
-      put(this.add.text(0, -CARD_H / 2 + 286, `MATCH COST · ${TIME_COSTS.match} DAYS`, T(12, THEME.GOLD)).setOrigin(0.5));
+      const matchDayCost = team.id === zone.bossId ? TIME_COSTS.bossMatch : TIME_COSTS.match;
+      put(this.add.text(0, -CARD_H / 2 + 286, `MATCH COST · ${matchDayCost} DAYS`, T(12, THEME.GOLD)).setOrigin(0.5));
       const completedRegularWins = zone.opponents.filter(id => state.results[id] === 'win').length;
       const level = zoneThreatLevel(zone.difficulty, completedRegularWins, boss);
       const lit = Math.max(1, Math.min(PIPS, Math.round(level * PIPS)));
@@ -187,9 +194,9 @@ export class OpponentSelectScene extends Phaser.Scene {
       card.add(new TextButton(this, 0, CARD_H / 2 - 28, `FIGHT  [${i + 1}]`, { color: champion || boss ? THEME.GOLD : THEME.GREEN, minWidth: 150 }));
     } else {
       const poach = state.poaches.find((p) => p.fromTeamId === team.id);
-      const line =
+      const line = outOfTime ? 'boss is the only fight left' :
         result === 'win' ? (poach ? `took ${poach.taken}` : 'nobody taken') : 'your run ended here';
-      const color = result === 'win' ? (poach ? THEME.GREEN : THEME.DIM) : THEME.DIM;
+      const color = outOfTime ? THEME.RED : result === 'win' ? (poach ? THEME.GREEN : THEME.DIM) : THEME.DIM;
       put(this.add.text(0, -CARD_H / 2 + 248, line, T(13, color)).setOrigin(0.5));
       card.setAlpha(0.55);
     }
@@ -222,7 +229,7 @@ export class OpponentSelectScene extends Phaser.Scene {
     this.add.text(x0 + 770, cy - 30, 'TEAM OVR', T(11, THEME.DIM)).setOrigin(0.5);
     this.add.text(x0 + 770, cy + 4, String(ownOvr), T(40, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0.5);
 
-    new TextButton(this, x0 + CARDS_W - 28 - 88, cy, 'SAVE & QUIT  (ESC)', { color: THEME.GRAY, minWidth: 176, onSelect: () => this.scene.start('TitleScene') });
+    new TextButton(this, x0 + CARDS_W - 28 - 88, cy, 'ISLAND MAP  (ESC)', { color: THEME.GRAY, minWidth: 176, onSelect: () => this.scene.start('ZoneSelectScene') });
   }
 
   // ---------- focus ----------
@@ -248,14 +255,18 @@ export class OpponentSelectScene extends Phaser.Scene {
   }
 
   private launch(teamId: string): void {
-    if (getMeta().daysRemaining <= 0) { this.scene.start('ZoneSelectScene'); return; }
-    spendDays(TIME_COSTS.match);
-    const state = startMatch(getRun(), teamId);
-    setRun(state);
+    const meta = getMeta();
+    if (meta.daysRemaining <= 0 && !meta.activeIslandId) { this.scene.start('ZoneSelectScene'); return; }
+    const before = getRun();
     const team = teamById(teamId);
-    const zone = ZONES.find(z => z.id === getMeta().selectedZoneId) || ZONES[0];
-    const completedRegularWins = zone.opponents.filter(id => state.results[id] === 'win').length;
+    const zone = resolveWorldZone(meta.activeIslandId || meta.selectedZoneId) || ZONES[0];
+    if (meta.activeIslandId && meta.activeIslandId !== zone.id) return;
+    const dayCost = teamId === zone.bossId ? TIME_COSTS.bossMatch : TIME_COSTS.match;
+    spendDays(dayCost);
+    const completedRegularWins = zone.opponents.filter(id => before.results[id] === 'win').length;
     const level = zoneThreatLevel(zone.difficulty, completedRegularWins, teamId === zone.bossId);
+    const state = startMatch(before, teamId, { level });
+    setRun(state);
     this.scene.start('GameScene', { userTeam: state.userTeam, opponent: team, level });
   }
 

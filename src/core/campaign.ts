@@ -5,7 +5,7 @@
  *   - 3 regular teams, fought in any order, each once per run.
  *   - The champion is always available and is the finale; beating it ends the run (victory).
  *   - Matches are first-to-3: no ties — every match is a win or a loss.
- *   - Losing a match ends the run (one-shot run, no retries).
+ *   - Losing a match ends the run unless the permanent Second Chance Charm grants one rematch.
  *   - After beating a regular team you may poach 1 of its players (swap: take 1,
  *     drop 1 of your own, same side — field or goalie). The taken player swaps
  *     into the dropped player's slot. The champion grants no poach.
@@ -17,6 +17,8 @@ import { ALL_TEAMS, CAMPAIGN_TEAMS, CHAMPION_TEAM, USER_TEAM, type PlayerDef, ty
 import { STARTER_EVOLUTIONS, TOWER_STAGES, ZONES } from '../config/progression';
 import type { BaseStats } from './stats';
 import { getMeta } from '../state/metaStore';
+import { applyPermanentSpeciesEvolutionToTeam } from './permanentItems';
+import { resolveWorldTeam, resolveWorldZone } from './worldState';
 
 /** How a match against a given team ended (no ties: first to 3 goals). */
 export type MatchOutcome = 'win' | 'loss';
@@ -49,6 +51,13 @@ export interface CampaignState {
   matchInProgress?: string;
   /** A just-beaten regular team whose player hasn't been taken (or skipped) yet. */
   pendingPoach?: string;
+  /** The permanent Second Chance Charm is only usable once in a run. */
+  retryUsed?: boolean;
+  /** Snapshot before the most recent match, used for a single rematch after defeat. */
+  retrySnapshot?: {
+    teamId: string; userTeam: Team; bench: PlayerDef[]; results: Record<string, MatchOutcome>; poaches: Poach[];
+    pendingPoach?: string; level: number; tournament: boolean; towerFloor?: number;
+  };
 }
 
 export function cloneStats(s: BaseStats): BaseStats {
@@ -65,20 +74,21 @@ export function cloneTeam(t: Team): Team {
 
 /** A fresh run: the starting roster, no results. */
 export function newRun(): CampaignState {
-  const team = cloneTeam(USER_TEAM);
-  const starter = getMeta().starter;
+  const meta = getMeta();
+  const team = applyPermanentSpeciesEvolutionToTeam(cloneTeam(USER_TEAM), meta.unlocked);
+  const starter = meta.starter;
   const starterDefs = STARTER_EVOLUTIONS;
   const xp = starter ? getMeta().starterXp[starter] : 0;
   const stages = starter ? starterDefs[starter] : undefined;
   if (starter && stages) { const stage = [...stages].reverse().find(x => xp >= x.at)!; team.players[2] = { name: stage.name, sprite: stage.sprite, isStarter: true, stats: { ...stage.stats, hp: stage.stats.hp + getMeta().starterBonusHp } }; }
-  return { userTeam: team, bench: [], results: {}, poaches: [], gameOver: false, victory: false };
+  return { userTeam: team, bench: [], results: {}, poaches: [], gameOver: false, victory: false, retryUsed: false };
 }
 
 
 export function teamById(id: string): Team {
   const team = ALL_TEAMS.find((t) => t.id === id);
   if (!team) throw new Error(`Unknown team: ${id}`);
-  return team;
+  return resolveWorldTeam(team);
 }
 
 export function isChampion(teamId: string): boolean {
@@ -87,7 +97,8 @@ export function isChampion(teamId: string): boolean {
 
 /** Island bosses are challenging milestones but do not end the whole run. */
 export function isIslandBoss(teamId: string): boolean {
-  return teamById(teamId).role === 'boss';
+  // Stable zone IDs may point at a different boss team under a world event.
+  return ZONES.some(base => (resolveWorldZone(base.id) || base).bossId === teamId) || teamById(teamId).role === 'boss';
 }
 
 /** How many matches the player has won this run. */
@@ -108,14 +119,53 @@ export function recordResult(state: CampaignState, teamId: string, outcome: Matc
 }
 
 /** Mark a match as started (so abandoning it later can be detected). */
-export function startMatch(state: CampaignState, teamId: string): CampaignState {
+export interface MatchRetryConfig { level?: number; tournament?: boolean; towerFloor?: number }
+
+export function startMatch(state: CampaignState, teamId: string, config: MatchRetryConfig = {}): CampaignState {
   const isLegacyAvailable = availableOpponents(state).some((t) => t.id === teamId);
-  const zone = ZONES.find((z) => z.id === getMeta().selectedZoneId);
+  const zone = resolveWorldZone(getMeta().activeIslandId || getMeta().selectedZoneId);
   const islandTeamIds = zone ? [...zone.opponents, zone.bossId] : [];
   const isSelectedIslandAvailable = islandTeamIds.includes(teamId) && !state.results[teamId] && !state.gameOver && !state.victory;
   const isTournamentStageAvailable = getMeta().daysRemaining <= 0 && TOWER_STAGES.some(stage => stage.opponentId === teamId) && !state.gameOver && !state.victory;
   if (!isLegacyAvailable && !isSelectedIslandAvailable && !isTournamentStageAvailable) throw new Error(`Team ${teamId} is not available`);
-  return { ...state, matchInProgress: teamId };
+  if (state.matchInProgress === teamId) return state;
+  const inferredTournament = config.tournament ?? isTournamentStageAvailable;
+  const inferredLevel = config.level ?? difficultyLevel(state, teamId);
+  return {
+    ...state,
+    matchInProgress: teamId,
+    retrySnapshot: {
+      teamId,
+      userTeam: cloneTeam(state.userTeam),
+      bench: (state.bench || []).map(clonePlayer),
+      results: { ...state.results },
+      poaches: [...state.poaches],
+      pendingPoach: state.pendingPoach,
+      level: Math.max(0, Math.min(1, inferredLevel)),
+      tournament: inferredTournament,
+      towerFloor: config.towerFloor,
+    },
+    retryUsed: state.retryUsed ?? false,
+  };
+}
+
+/** Restore the pre-match roster/progression and begin exactly one rematch. */
+export function retryLastMatch(state: CampaignState): CampaignState {
+  const snapshot = state.retrySnapshot;
+  if (!snapshot || state.retryUsed) throw new Error('No match retry remains');
+  return syncStarterEvolution({
+    ...state,
+    userTeam: cloneTeam(snapshot.userTeam),
+    bench: snapshot.bench.map(clonePlayer),
+    results: { ...snapshot.results },
+    poaches: [...snapshot.poaches],
+    pendingPoach: snapshot.pendingPoach,
+    gameOver: false,
+    victory: false,
+    matchInProgress: snapshot.teamId,
+    retryUsed: true,
+    retrySnapshot: undefined,
+  });
 }
 
 /** Treat a match that was started but never finished as a forfeit (a loss; the run is over). */

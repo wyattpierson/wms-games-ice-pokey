@@ -6,12 +6,27 @@ import { DEFAULT_LEVEL } from '../config/difficulty';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/rink';
 import { averageOverall, overall } from '../core/poach';
 import { balanceSummariesToCsv, type BalanceMatchSummary } from '../core/balanceLab';
+import { buildBalanceLabPlayerTeam } from '../core/balanceLabItems';
+import { ITEM_IDS, SHOP_OFFERS } from '../config/progression';
+import type { StarterId } from '../state/metaStore';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
 
 const STORAGE_KEY = 'ice-pokey:balance-lab:v1';
 const MAX_HISTORY = 40;
 interface BalanceLabData { latest?: BalanceMatchSummary }
+type LoadoutTab = 'powers' | 'items';
+const STARTERS: StarterId[] = ['larvitar', 'gible', 'bagon'];
+const STARTER_LABELS: Record<StarterId, string> = { larvitar: 'TYRANITAR', gible: 'GARCHOMP', bagon: 'SALAMENCE' };
+const ITEM_TEST_DESCRIPTIONS: Record<string, string> = {
+  [ITEM_IDS.evolvePikachu]: 'Pikachu → Raichu · permanent species upgrade',
+  [ITEM_IDS.evolvePsyduck]: 'Psyduck → Golduck · permanent species upgrade',
+  [ITEM_IDS.secondChance]: 'Retry a lost test match once',
+  [ITEM_IDS.megaEvolution]: 'Press M once per match · mega lasts until a goal',
+  [ITEM_IDS.superParry]: 'Successful parry incapacitates carrier for 5 sec',
+  [ITEM_IDS.superJuke]: 'Nearby defenders get knocked behind a landed deke',
+  [ITEM_IDS.superShot]: 'Short, stronger release window inside goalie flash',
+};
 function loadHistory(): BalanceMatchSummary[] {
   try { const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); return Array.isArray(parsed) ? parsed as BalanceMatchSummary[] : []; }
   catch { return []; }
@@ -21,14 +36,18 @@ function saveHistory(rows: BalanceMatchSummary[]): void {
 }
 const T = (size: number, color: number, extra: Phaser.Types.GameObjects.Text.TextStyle = {}): Phaser.Types.GameObjects.Text.TextStyle => ({ fontFamily: FONT, fontSize: `${size}px`, color: hex(color), ...extra });
 
-/** Fast, standalone matchup builder for repeatable balance testing. */
+/** Fast, standalone matchup builder for repeatable power + permanent-item testing. */
 export class BalanceLabScene extends Phaser.Scene {
   private teams: Team[] = [];
   private playerIndex = 0;
   private opponentIndex = 1;
   private powerIndex = 0;
+  private itemIndex = 0;
   private difficulty = DEFAULT_LEVEL;
+  private loadoutTab: LoadoutTab = 'powers';
+  private megaStarter: StarterId = 'larvitar';
   private selectedPowerIds = new Set<string>();
+  private selectedItemIds = new Set<string>();
   private history: BalanceMatchSummary[] = [];
   private onKey: ((e: KeyboardEvent) => void) | null = null;
   private playerPanel!: Phaser.GameObjects.Container;
@@ -38,11 +57,14 @@ export class BalanceLabScene extends Phaser.Scene {
   private noteText!: Phaser.GameObjects.Text;
   private pickerObjects: Phaser.GameObjects.GameObject[] = [];
   private difficultyText!: Phaser.GameObjects.Text;
+  private selectedTabText!: Phaser.GameObjects.Text;
+  private tabButtons: Array<{ plate: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; tab: LoadoutTab }> = [];
 
   constructor() { super('BalanceLabScene'); }
 
   create(data: BalanceLabData = {}): void {
     wireShutdown(this);
+    this.tabButtons = [];
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.BLUE);
     this.teams = ALL_TEAMS;
@@ -50,38 +72,51 @@ export class BalanceLabScene extends Phaser.Scene {
     this.opponentIndex = this.teams.findIndex(t => t.id !== USER_TEAM.id);
     if (this.opponentIndex < 0) this.opponentIndex = 0;
     this.history = loadHistory();
-    if (data.latest) { this.history.unshift(data.latest); this.history = this.history.slice(0, MAX_HISTORY); saveHistory(this.history); }
+    if (data.latest) {
+      this.history.unshift(data.latest);
+      this.history = this.history.slice(0, MAX_HISTORY);
+      saveHistory(this.history);
+    }
 
-    this.add.text(GAME_WIDTH / 2, 28, 'BALANCE LAB', T(30, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-    this.add.text(GAME_WIDTH / 2, 57, 'Build a matchup. No campaign days, rewards, or progression are spent.', T(12, THEME.DIM)).setOrigin(.5);
+    this.add.text(GAME_WIDTH / 2, 24, 'BALANCE LAB', T(27, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(GAME_WIDTH / 2, 51, 'Configure a matchup and test campaign items without spending currency or changing your save.', T(11, THEME.DIM)).setOrigin(.5);
 
+    // Matchup cards: consistent boundaries and a clear visual split between sides.
     this.playerPanel = this.add.container(0, 0);
     this.opponentPanel = this.add.container(0, 0);
-    this.renderTeamPanel(this.playerPanel, 292, 'PLAY AS', true);
-    this.renderTeamPanel(this.opponentPanel, 900, 'PLAY AGAINST', false);
-    this.add.text(GAME_WIDTH / 2, 151, 'VS', T(24, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.renderTeamPanel(this.playerPanel, 292, 'YOUR TEAM', true);
+    this.renderTeamPanel(this.opponentPanel, 900, 'OPPONENT', false);
+    this.add.text(GAME_WIDTH / 2, 163, 'VS', T(22, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
 
-    this.add.rectangle(GAME_WIDTH / 2, 310, 820, 58, FILL.panel, 1).setStrokeStyle(1, THEME.DIM);
-    this.add.text(220, 296, 'AI DIFFICULTY', T(12, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5);
-    this.difficultyText = this.add.text(220, 322, '', T(17, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-    this.makeButton(375, 310, '−', () => this.setDifficulty(this.difficulty - .25), 40, 34);
-    this.makeButton(705, 310, '+', () => this.setDifficulty(this.difficulty + .25), 40, 34);
-    this.add.text(540, 310, 'Adjust how sharp and aggressive the opposing AI plays.', T(12, THEME.DIM)).setOrigin(.5);
+    // Difficulty strip.
+    this.add.rectangle(GAME_WIDTH / 2, 298, 820, 48, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
+    this.add.text(235, 298, 'AI DIFFICULTY', T(11, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5);
+    this.difficultyText = this.add.text(365, 298, '', T(14, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(626, 298, 'Tune reaction speed, pressure, and aggression', T(11, THEME.DIM)).setOrigin(.5);
+    this.makeButton(930, 298, '−', () => this.setDifficulty(this.difficulty - .25), 38, 30, THEME.WHITE);
+    this.makeButton(976, 298, '+', () => this.setDifficulty(this.difficulty + .25), 38, 30, THEME.WHITE);
 
+    // One tidy loadout panel with tabs so both systems have room to breathe.
+    this.add.rectangle(GAME_WIDTH / 2, 446, 1010, 174, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
     this.powersPanel = this.add.container(0, 0).setDepth(20);
-    this.add.rectangle(GAME_WIDTH / 2, 447, 820, 142, FILL.panel, 1).setStrokeStyle(1, THEME.DIM);
-    this.add.text(200, 383, 'POWER LOADOUT', T(14, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
-    this.add.text(880, 383, 'Click a power to toggle it on/off', T(11, THEME.DIM)).setOrigin(1, .5);
+    this.add.text(120, 373, 'MATCH LOADOUT', T(10, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
+    this.createLoadoutTab(230, 373, 'POWERS', 'powers', 104);
+    this.createLoadoutTab(350, 373, 'PERMANENT ITEMS', 'items', 174);
+    this.refreshLoadoutTabs();
+    this.selectedTabText = this.add.text(980, 373, '', T(10, THEME.DIM)).setOrigin(1, .5);
     this.renderPowers();
 
-    this.add.text(200, 535, 'RECENT MATCHES', T(13, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
-    this.historyText = this.add.text(200, 555, '', T(11, THEME.WHITE, { lineSpacing: 4, wordWrap: { width: 790 } }));
-    this.noteText = this.add.text(GAME_WIDTH / 2, 600, '', T(12, THEME.GREEN)).setOrigin(.5);
+    // A compact recent-match strip keeps useful diagnostics visible without competing with setup.
+    this.add.rectangle(GAME_WIDTH / 2, 568, 1010, 62, FILL.panel, 1).setStrokeStyle(1, 0x26394b);
+    this.add.text(115, 547, 'RECENT TESTS', T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
+    this.historyText = this.add.text(115, 566, '', T(10, THEME.WHITE, { lineSpacing: 3, wordWrap: { width: 980 } }));
+    this.noteText = this.add.text(GAME_WIDTH / 2, 608, '', T(10, THEME.GREEN)).setOrigin(.5);
+
     this.setDifficulty(this.difficulty);
-    this.makeButton(195, 647, 'START MATCH', () => this.launchMatch(), 190, 38, THEME.GREEN);
-    this.makeButton(410, 647, 'EXPORT CSV', () => this.download('ice-pokey-balance.csv', balanceSummariesToCsv(this.history), 'text/csv'), 150, 38);
-    this.makeButton(580, 647, 'EXPORT JSON', () => this.download('ice-pokey-balance.json', JSON.stringify(this.history, null, 2), 'application/json'), 150, 38);
-    this.makeButton(890, 647, 'BACK TO TITLE', () => this.scene.start('TitleScene'), 180, 38, THEME.GRAY);
+    this.makeButton(180, 641, 'START MATCH', () => this.launchMatch(), 176, 34, THEME.GREEN);
+    this.makeButton(374, 641, 'EXPORT CSV', () => this.download('ice-pokey-balance.csv', balanceSummariesToCsv(this.history), 'text/csv'), 132, 34);
+    this.makeButton(520, 641, 'EXPORT JSON', () => this.download('ice-pokey-balance.json', JSON.stringify(this.history, null, 2), 'application/json'), 142, 34);
+    this.makeButton(975, 641, 'BACK TO TITLE', () => this.scene.start('TitleScene'), 170, 34, THEME.GRAY);
 
     this.renderTeam(this.playerPanel, this.playerIndex, true);
     this.renderTeam(this.opponentPanel, this.opponentIndex, false);
@@ -96,9 +131,11 @@ export class BalanceLabScene extends Phaser.Scene {
         case 'KeyD': case 'ArrowRight': this.cycleTeam(true, 1); break;
         case 'KeyJ': this.cycleTeam(false, -1); break;
         case 'KeyL': this.cycleTeam(false, 1); break;
-        case 'ArrowUp': case 'KeyW': this.powerIndex = (this.powerIndex - 1 + POWER_DEFINITIONS.length) % POWER_DEFINITIONS.length; this.renderPowers(); break;
-        case 'ArrowDown': case 'KeyS': this.powerIndex = (this.powerIndex + 1) % POWER_DEFINITIONS.length; this.renderPowers(); break;
-        case 'Space': e.preventDefault(); this.togglePower(POWER_DEFINITIONS[this.powerIndex].id); break;
+        case 'KeyP': this.setLoadoutTab('powers'); break;
+        case 'KeyI': this.setLoadoutTab('items'); break;
+        case 'ArrowUp': case 'KeyW': this.cycleLoadout(-1); break;
+        case 'ArrowDown': case 'KeyS': this.cycleLoadout(1); break;
+        case 'Space': e.preventDefault(); this.toggleFocusedLoadout(); break;
         case 'BracketLeft': this.setDifficulty(this.difficulty - .25); break;
         case 'BracketRight': this.setDifficulty(this.difficulty + .25); break;
         case 'Enter': this.launchMatch(); break;
@@ -112,49 +149,52 @@ export class BalanceLabScene extends Phaser.Scene {
     panel.removeAll(true);
     const w = 330;
     const accent = isPlayer ? THEME.GREEN : THEME.BLUE;
-    panel.add(this.add.rectangle(x + 3, 178, w, 205, 0x000000, 0.32));
-    panel.add(this.add.rectangle(x, 175, w, 205, FILL.panel, 1).setStrokeStyle(2, accent));
-    panel.add(this.add.rectangle(x, 175, w - 10, 195, 0x000000, 0).setStrokeStyle(1, 0x34465a, 0.9));
-    panel.add(this.add.rectangle(x, 77, 74, 4, accent, 1));
-    panel.add(this.add.text(x, 91, heading, T(13, accent, { fontStyle: 'bold' })).setOrigin(.5));
-    this.makeButton(x - 116, 104, '‹ PREV', () => this.cycleTeam(isPlayer, -1), 82, 30);
-    this.makeButton(x + 116, 104, 'NEXT ›', () => this.cycleTeam(isPlayer, 1), 82, 30);
-    // Keep panel identity separate from button controls, which are siblings on purpose.
+    panel.add(this.add.rectangle(x + 3, 174, w, 200, 0x000000, 0.28));
+    panel.add(this.add.rectangle(x, 171, w, 200, FILL.panel, 1).setStrokeStyle(2, accent));
+    panel.add(this.add.rectangle(x, 171, w - 10, 190, 0x000000, 0).setStrokeStyle(1, 0x34465a, 0.9));
+    panel.add(this.add.rectangle(x, 76, 76, 3, accent, 1));
+    panel.add(this.add.text(x, 89, heading, T(12, accent, { fontStyle: 'bold' })).setOrigin(.5));
+    this.makeButton(x - 113, 109, '‹ PREV', () => this.cycleTeam(isPlayer, -1), 78, 27, accent);
+    this.makeButton(x + 113, 109, 'NEXT ›', () => this.cycleTeam(isPlayer, 1), 78, 27, accent);
+  }
+
+  private getPreviewPlayerTeam(): Team {
+    return buildBalanceLabPlayerTeam(this.teams[this.playerIndex], [...this.selectedItemIds], this.megaStarter);
   }
 
   private renderTeam(panel: Phaser.GameObjects.Container, index: number, isPlayer: boolean): void {
-    // Rebuild only the panel contents; preserve its background and header.
     const x = isPlayer ? 292 : 900;
     const old = panel.getData('team-content') as Phaser.GameObjects.GameObject[] | undefined;
     old?.forEach(o => o.destroy());
-    const team = this.teams[index];
+    const team = isPlayer ? this.getPreviewPlayerTeam() : this.teams[index];
     const parts: Phaser.GameObjects.GameObject[] = [];
     const add = <G extends Phaser.GameObjects.GameObject>(g: G): G => { panel.add(g); parts.push(g); return g; };
-    const teamName = add(this.add.text(x, 132, team.name, T(19, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5));
+    const teamName = add(this.add.text(x, 132, team.name, T(18, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5));
     teamName.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.openTeamPicker(isPlayer));
-    add(this.add.text(x, 157, `TEAM OVR  ${averageOverall(team.players)}`, T(13, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
+    const suffix = isPlayer && this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? '  ·  MEGA TEST SLOT 1' : '';
+    add(this.add.text(x, 154, `TEAM OVR  ${averageOverall(team.players)}${suffix}`, T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
     team.players.forEach((p, i) => {
       const px = x - 125 + i * 83;
-      add(this.add.image(px, 207, `pkm-${p.sprite}`).setScale(.43));
-      add(this.add.text(px, 244, p.name, T(10, THEME.WHITE, { align: 'center', wordWrap: { width: 80 } })).setOrigin(.5));
-      add(this.add.text(px, 262, `OVR ${overall(p)}`, T(11, THEME.GOLD)).setOrigin(.5));
+      add(this.add.image(px, 194, `pkm-${p.sprite}`).setScale(.40));
+      add(this.add.text(px, 224, p.name, T(10, THEME.WHITE, { align: 'center', wordWrap: { width: 80 } })).setOrigin(.5));
+      add(this.add.text(px, 243, `OVR ${overall(p)}`, T(10, THEME.GOLD)).setOrigin(.5));
     });
     panel.setData('team-content', parts);
   }
 
   private openTeamPicker(playerSide: boolean): void {
     this.closeTeamPicker();
-    const dim = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.84).setInteractive();
-    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 960, 500, FILL.panel, 1).setStrokeStyle(2, THEME.GOLD);
+    const dim = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.92).setInteractive().setDepth(100);
+    const panel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 960, 500, FILL.panel, 1).setStrokeStyle(2, THEME.GOLD).setDepth(101);
     this.pickerObjects.push(dim, panel);
-    const title = this.add.text(GAME_WIDTH / 2, 112, `CHOOSE TEAM TO ${playerSide ? 'PLAY AS' : 'PLAY AGAINST'}`, T(20, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    const title = this.add.text(GAME_WIDTH / 2, 112, `CHOOSE TEAM TO ${playerSide ? 'PLAY AS' : 'PLAY AGAINST'}`, T(20, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5).setDepth(102);
     this.pickerObjects.push(title);
     this.teams.forEach((team, i) => {
       const col = i % 4, row = Math.floor(i / 4), x = 245 + col * 235, y = 166 + row * 58;
       const current = team.id === this.teams[playerSide ? this.playerIndex : this.opponentIndex].id;
-      const plate = this.add.rectangle(x, y, 218, 44, current ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(current ? 2 : 1, current ? THEME.GOLD : THEME.DIM).setInteractive({ useHandCursor: true });
-      const name = this.add.text(x, y - 7, team.name, T(11, THEME.WHITE, { fontStyle: 'bold', align: 'center', wordWrap: { width: 205 } })).setOrigin(.5);
-      const ovr = this.add.text(x, y + 12, `TEAM OVR ${averageOverall(team.players)}`, T(10, THEME.GOLD)).setOrigin(.5);
+      const plate = this.add.rectangle(x, y, 218, 44, current ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(current ? 2 : 1, current ? THEME.GOLD : THEME.DIM).setInteractive({ useHandCursor: true }).setDepth(102);
+      const name = this.add.text(x, y - 7, team.name, T(11, THEME.WHITE, { fontStyle: 'bold', align: 'center', wordWrap: { width: 205 } })).setOrigin(.5).setDepth(103);
+      const ovr = this.add.text(x, y + 12, `TEAM OVR ${averageOverall(team.players)}`, T(10, THEME.GOLD)).setOrigin(.5).setDepth(103);
       this.pickerObjects.push(plate, name, ovr);
       const choose = () => {
         if (playerSide) this.playerIndex = i; else this.opponentIndex = i;
@@ -163,37 +203,115 @@ export class BalanceLabScene extends Phaser.Scene {
       };
       plate.on('pointerdown', choose); name.setInteractive({ useHandCursor: true }).on('pointerdown', choose); ovr.setInteractive({ useHandCursor: true }).on('pointerdown', choose);
     });
-    const close = this.add.text(GAME_WIDTH / 2, 603, 'CANCEL  ·  ESC', T(12, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5).setInteractive({ useHandCursor: true });
-    close.setY(565);
+    const close = this.add.text(GAME_WIDTH / 2, 565, 'CANCEL  ·  ESC', T(12, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5).setInteractive({ useHandCursor: true }).setDepth(104);
     close.on('pointerdown', () => this.closeTeamPicker());
     this.pickerObjects.push(close);
   }
 
-  private closeTeamPicker(): void {
-    this.pickerObjects.forEach(o => o.destroy());
-    this.pickerObjects = [];
+  private closeTeamPicker(): void { this.pickerObjects.forEach(o => o.destroy()); this.pickerObjects = []; }
+
+  private setLoadoutTab(tab: LoadoutTab): void {
+    if (this.loadoutTab === tab) return;
+    this.loadoutTab = tab;
+    this.powerIndex = 0;
+    this.itemIndex = 0;
+    this.refreshLoadoutTabs();
+    this.renderPowers();
+  }
+
+  private createLoadoutTab(x: number, y: number, title: string, tab: LoadoutTab, width: number): void {
+    const plate = this.add.rectangle(x, y, width, 28, FILL.plate, 1).setStrokeStyle(1, THEME.DIM).setInteractive({ useHandCursor: true });
+    const label = this.add.text(x, y, title, T(10, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5).setInteractive({ useHandCursor: true });
+    const choose = () => this.setLoadoutTab(tab);
+    plate.on('pointerdown', choose);
+    label.on('pointerdown', choose);
+    this.tabButtons.push({ plate, label, tab });
+  }
+
+  private refreshLoadoutTabs(): void {
+    for (const button of this.tabButtons) {
+      const active = button.tab === this.loadoutTab;
+      button.plate.setFillStyle(active ? FILL.plateHi : FILL.plate, 1);
+      button.plate.setStrokeStyle(active ? 2 : 1, active ? (button.tab === 'items' ? THEME.GREEN : THEME.GOLD) : THEME.DIM);
+      button.label.setColor(hex(active ? (button.tab === 'items' ? THEME.GREEN : THEME.GOLD) : THEME.DIM));
+    }
+  }
+
+  private activeLoadoutLength(): number { return this.loadoutTab === 'powers' ? POWER_DEFINITIONS.length : SHOP_OFFERS.filter(o => o.kind === 'item').length; }
+  private cycleLoadout(direction: number): void {
+    if (this.loadoutTab === 'powers') this.powerIndex = (this.powerIndex + direction + POWER_DEFINITIONS.length) % POWER_DEFINITIONS.length;
+    else this.itemIndex = (this.itemIndex + direction + this.activeLoadoutLength()) % this.activeLoadoutLength();
+    this.renderPowers();
+  }
+  private toggleFocusedLoadout(): void {
+    if (this.loadoutTab === 'powers') this.togglePower(POWER_DEFINITIONS[this.powerIndex].id);
+    else {
+      const item = SHOP_OFFERS.filter(o => o.kind === 'item')[this.itemIndex];
+      if (item) this.toggleItem(item.id);
+    }
   }
 
   private renderPowers(): void {
     this.powersPanel.removeAll(true);
-    POWER_DEFINITIONS.forEach((power, i) => {
-      const col = i % 2, row = Math.floor(i / 2), x = 230 + col * 390, y = 414 + row * 42;
-      const selected = this.selectedPowerIds.has(power.id), focused = i === this.powerIndex;
-      const frame = this.add.rectangle(x + 170, y + 9, 360, 34, focused ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
-      const label = this.add.text(x + 12, y - 1, `${selected ? '✓' : '○'}  ${power.name}`, T(13, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
-      const desc = this.add.text(x + 12, y + 16, power.description, T(10, THEME.DIM, { wordWrap: { width: 325 } }));
-      this.powersPanel.add([frame, label, desc]);
-      frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.powerIndex = i; this.togglePower(power.id); });
-      label.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.powerIndex = i; this.togglePower(power.id); });
-      desc.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.powerIndex = i; this.togglePower(power.id); });
-    });
+    const items = SHOP_OFFERS.filter(o => o.kind === 'item');
+    this.selectedTabText.setText(this.loadoutTab === 'powers'
+      ? 'Toggle powers for this match only'
+      : 'All items testable here · no save unlock required');
+    const add = (obj: Phaser.GameObjects.GameObject) => this.powersPanel.add(obj);
+    if (this.loadoutTab === 'powers') {
+      POWER_DEFINITIONS.forEach((power, i) => {
+        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 350 : 840, y = 432 + row * 49;
+        const selected = this.selectedPowerIds.has(power.id), focused = i === this.powerIndex;
+        const frame = this.add.rectangle(x, y, 458, 39, selected ? 0x16372f : FILL.plate, 1)
+          .setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
+        const label = this.add.text(x - 216, y - 9, `${selected ? '✓' : '○'}  ${power.name}`, T(11, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
+        const desc = this.add.text(x - 216, y + 6, power.description, T(9, THEME.DIM, { wordWrap: { width: 420 } }));
+        [frame, label, desc].forEach(add);
+        [frame, label, desc].forEach(o => o.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.powerIndex = i; this.togglePower(power.id); }));
+      });
+    } else {
+      // The starter-form buttons are specific to the Mega Band test harness. They replace
+      // player-team slot 1 with that fully evolved starter only in the isolated test match.
+      const formText = this.add.text(132, 398, 'MEGA TEST STARTER', T(9, this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? THEME.GOLD : THEME.DIM, { fontStyle: 'bold' }));
+      add(formText);
+      STARTERS.forEach((starter, i) => {
+        const x = 300 + i * 170;
+        const selected = this.megaStarter === starter;
+        const frame = this.add.rectangle(x, 398, 150, 22, selected ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(selected ? 2 : 1, selected ? THEME.GOLD : THEME.DIM);
+        const label = this.add.text(x, 398, STARTER_LABELS[starter], T(9, selected ? THEME.GOLD : THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5);
+        add(frame); add(label);
+        frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.selectMegaStarter(starter));
+        label.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.selectMegaStarter(starter));
+      });
+      items.forEach((item, i) => {
+        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 350 : 840, y = 426 + row * 27;
+        const id = item.id;
+        const selected = this.selectedItemIds.has(id), focused = i === this.itemIndex;
+        const labelText = ITEM_TEST_DESCRIPTIONS[id] || item.description;
+        const frame = this.add.rectangle(x, y, 458, 24, selected ? 0x16372f : FILL.plate, 1)
+          .setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
+        const label = this.add.text(x - 218, y, `${selected ? '✓' : '○'}  ${item.name}  ·  ${labelText}`, T(9, selected ? THEME.GREEN : THEME.WHITE, { wordWrap: { width: 430 } })).setOrigin(0, .5);
+        add(frame); add(label);
+        frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.itemIndex = i; this.toggleItem(id); });
+        label.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.itemIndex = i; this.toggleItem(id); });
+      });
+    }
     this.renderHistory();
+  }
+
+  private selectMegaStarter(starter: StarterId): void {
+    this.megaStarter = starter;
+    this.renderPowers();
+    this.renderTeam(this.playerPanel, this.playerIndex, true);
   }
 
   private renderHistory(): void {
     if (!this.historyText) return;
-    this.historyText.setText(this.history.length ? this.history.slice(0, 2).map(r => `${r.result.toUpperCase()}  ${r.playerScore}–${r.opponentScore}  ${r.playerTeamName ?? 'Player'} vs ${r.opponentName}  ·  ${r.liveSeconds}s  ·  shots ${r.shots}  ·  powers ${r.powerActivations}`).join('\n') : 'No test matches yet. Pick both teams above, then start a match.');
+    this.historyText.setText(this.history.length
+      ? this.history.slice(0, 2).map(r => `${r.result.toUpperCase()}  ${r.playerScore}–${r.opponentScore}  ${r.playerTeamName ?? 'Player'} vs ${r.opponentName}  ·  ${r.liveSeconds}s  ·  shots ${r.shots}  ·  powers ${r.powerActivations}  ·  items ${(r.itemIds || []).length}`).join('\n')
+      : 'No test matches yet. Choose both teams, configure a loadout, and start a match.');
   }
+
   private cycleTeam(playerSide: boolean, direction: number): void {
     if (playerSide) this.playerIndex = (this.playerIndex + direction + this.teams.length) % this.teams.length;
     else this.opponentIndex = (this.opponentIndex + direction + this.teams.length) % this.teams.length;
@@ -203,19 +321,33 @@ export class BalanceLabScene extends Phaser.Scene {
     this.difficulty = Math.max(0, Math.min(1, Math.round(value * 4) / 4));
     const labels = ['Easy', 'Relaxed', 'Normal', 'Hard', 'Expert'];
     this.difficultyText.setText(`${labels[Math.round(this.difficulty * 4)]}  ·  ${Math.round(this.difficulty * 100)}%`);
-    this.noteText?.setText('');
+    if (this.noteText) this.noteText.setText('');
   }
   private togglePower(id: string): void {
     if (this.selectedPowerIds.has(id)) this.selectedPowerIds.delete(id); else this.selectedPowerIds.add(id);
     this.renderPowers();
   }
+  private toggleItem(id: string): void {
+    if (this.selectedItemIds.has(id)) this.selectedItemIds.delete(id); else this.selectedItemIds.add(id);
+    this.renderPowers();
+    this.renderTeam(this.playerPanel, this.playerIndex, true);
+  }
   private launchMatch(): void {
-    const player = this.teams[this.playerIndex], opponent = this.teams[this.opponentIndex];
-    this.scene.start('GameScene', { userTeam: player, opponent, level: this.difficulty, testMode: true, powerIds: [...this.selectedPowerIds] });
+    const player = buildBalanceLabPlayerTeam(this.teams[this.playerIndex], [...this.selectedItemIds], this.megaStarter);
+    const opponent = this.teams[this.opponentIndex];
+    this.scene.start('GameScene', {
+      userTeam: player,
+      opponent,
+      level: this.difficulty,
+      testMode: true,
+      powerIds: [...this.selectedPowerIds],
+      testItemIds: [...this.selectedItemIds],
+      testStarter: this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? this.megaStarter : null,
+    });
   }
   private makeButton(x: number, y: number, label: string, onClick: () => void, width = 110, height = 32, color: number = THEME.GOLD): void {
     const plate = this.add.rectangle(x, y, width, height, FILL.plate, 1).setStrokeStyle(1, color).setInteractive({ useHandCursor: true });
-    const text = this.add.text(x, y, label, T(11, color, { fontStyle: 'bold' })).setOrigin(.5);
+    const text = this.add.text(x, y, label, T(10, color, { fontStyle: 'bold' })).setOrigin(.5);
     plate.on('pointerdown', onClick); text.setInteractive({ useHandCursor: true }).on('pointerdown', onClick);
   }
   private download(filename: string, content: string, mime: string): void {
