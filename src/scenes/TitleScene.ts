@@ -48,15 +48,16 @@ export class TitleScene extends Phaser.Scene {
   create(data?: { advanceYearAfterReflection?: boolean }): void {
     wireShutdown(this);
     if (data?.advanceYearAfterReflection) { this.beginNextYear(); return; }
-    const W = GAME_WIDTH;
+    this.bobbers = [];
+    this.help = null;
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.GOLD);
 
     this.add
-      .text(W / 2, 118, 'ICE POKÉY', { fontFamily: FONT, fontSize: '64px', color: hex(THEME.GOLD) })
+      .text(348, 151, 'ICE POKÉY', { fontFamily: FONT, fontSize: '64px', color: hex(THEME.GOLD) })
       .setOrigin(0.5);
     this.add
-      .text(W / 2, 172, 'a roguelike pokémon hockey run', { fontFamily: FONT, fontSize: '16px', color: hex(THEME.DIM) })
+      .text(348, 204, 'a roguelike pokémon hockey run', { fontFamily: FONT, fontSize: '16px', color: hex(THEME.DIM) })
       .setOrigin(0.5);
 
     const meta = getMeta();
@@ -71,22 +72,29 @@ export class TitleScene extends Phaser.Scene {
           const starter = STARTER_EVOLUTIONS[id][0];
           return { name: starter.name, sprite: starter.sprite };
         });
-    this.add.text(W / 2, 214, hasPlayed ? 'YOUR CURRENT LINEUP' : 'CHOOSE YOUR STARTER', { fontFamily: FONT, fontSize: '14px', color: hex(THEME.DIM) }).setOrigin(0.5);
+    addRetroPanel(this, 348, 352, 508, 214, THEME.BLUE, FILL.panel);
+    this.add.text(348, 274, hasPlayed ? 'YOUR CURRENT LINEUP' : 'CHOOSE YOUR STARTER', { fontFamily: FONT, fontSize: '14px', color: hex(THEME.DIM) }).setOrigin(0.5);
     lineup.forEach((p, i) => {
-      const spr = this.add.image(W / 2 + (i - 1) * 140, 286, `pkm-${p.sprite}`);
+      const spr = this.add.image(348 + (i - (lineup.length - 1) / 2) * 140, 350, `pkm-${p.sprite}`);
       spr.setScale(1.15);
       this.bobbers.push({ spr, phase: i * 1.1 });
-      this.add.text(spr.x, 330, p.name.toUpperCase(), { fontFamily: FONT, fontSize: '12px', color: hex(THEME.WHITE) }).setOrigin(0.5);
+      this.add.text(spr.x, 414, p.name.toUpperCase(), { fontFamily: FONT, fontSize: '12px', color: hex(THEME.WHITE) }).setOrigin(0.5);
     });
 
     const notice = takeNotice();
     if (notice) {
-      this.add.text(W / 2, 360, notice, { fontFamily: FONT, fontSize: '14px', color: hex(THEME.RED) }).setOrigin(0.5);
+      this.add.text(348, 510, notice, { fontFamily: FONT, fontSize: '13px', color: hex(THEME.RED), align: 'center', wordWrap: { width: 480 } }).setOrigin(0.5);
     }
 
     const newGame = !hasPlayed;
-    addRetroPanel(this, W / 2, 520, 410, 326, THEME.GOLD, FILL.panel);
-    const primaryBtn = new MenuButton(this, W / 2, 400, newGame ? 'NEW GAME' : 'CONTINUE', {
+    addRetroPanel(this, 890, 336, 420, 548, THEME.GOLD, FILL.panel);
+    this.add.text(890, 94, 'CAMPAIGN', { fontFamily: FONT, fontSize: '12px', color: hex(THEME.GOLD), fontStyle: 'bold' }).setOrigin(.5);
+    const primaryPlate = this.add.rectangle(890, 150, 356, 56, FILL.plateHi).setStrokeStyle(1, THEME.GREEN);
+    this.add.rectangle(890, 194, 356, 1, 0x34465a);
+    this.add.rectangle(890, 508, 356, 1, 0x34465a);
+    this.add.text(348, 488, hasPlayed ? `YEAR ${meta.seasonYear}  /  ${meta.daysRemaining} DAYS LEFT  /  ${meta.currency} CREDITS` : 'BUILD A TEAM. CONQUER THE ISLANDS.', { fontFamily: FONT, fontSize: '12px', color: hex(THEME.BLUE) }).setOrigin(.5);
+    this.add.text(890, 584, '↑ / ↓ SELECT   ·   ENTER CONFIRM', { fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM) }).setOrigin(.5);
+    const primaryBtn = new MenuButton(this, 890, 150, newGame ? 'NEW GAME' : 'CONTINUE', {
       color: THEME.GREEN,
       onSelect: () => {
         const current = getMeta();
@@ -108,30 +116,36 @@ export class TitleScene extends Phaser.Scene {
         this.beginNextYear();
       },
     });
-    const howBtn = new MenuButton(this, W / 2, 441, 'HOW TO PLAY', {
+    primaryPlate.setInteractive({ useHandCursor: true }).on('pointerdown', () => primaryBtn.onSelect?.());
+    const howBtn = new MenuButton(this, 890, 228, 'HOW TO PLAY', {
+      size: 20,
       onSelect: () => this.setHelp(!this.help),
     });
-    const statsBtn = new MenuButton(this, W / 2, 482, 'STATS GUIDE' , {
+    const statsBtn = new MenuButton(this, 890, 280, 'STATS GUIDE' , {
+      size: 20,
       color: THEME.BLUE,
       onSelect: () => this.scene.start('StatsGuideScene', { returnTo: 'TitleScene' }),
     });
-    const labBtn = new MenuButton(this, W / 2, 523, 'BALANCE LAB', {
+    const labBtn = new MenuButton(this, 890, 332, 'BALANCE LAB', {
+      size: 20,
       color: THEME.GOLD,
       onSelect: () => this.scene.start('BalanceLabScene'),
     });
-    const careerStatsBtn = new MenuButton(this, W / 2, 564, 'CAREER STATS', {
+    const careerStatsBtn = new MenuButton(this, 890, 384, 'CAREER STATS', {
+      size: 20,
       color: THEME.BLUE,
       onSelect: () => this.scene.start('CareerStatsScene', { returnTo: 'TitleScene' }),
     });
-    const shopBtn = new MenuButton(this, W / 2, 605, 'ITEM SHOP', {
+    const shopBtn = new MenuButton(this, 890, 436, 'ITEM SHOP', {
+      size: 20,
       color: THEME.GOLD,
       onSelect: () => this.scene.start('StoreScene', { returnTo: 'TitleScene' }),
     });
     const buttons: MenuButton[] = [primaryBtn, howBtn, statsBtn, labBtn, careerStatsBtn, shopBtn];
     if (hasPlayed) {
-      buttons.push(new MenuButton(this, W / 2, 646, 'WIPE ALL DATA', {
+      buttons.push(new MenuButton(this, 890, 546, 'WIPE ALL DATA', {
         color: THEME.RED,
-        size: 20,
+        size: 14,
         onSelect: () => this.confirmWipe(),
       }));
     }
@@ -213,7 +227,7 @@ export class TitleScene extends Phaser.Scene {
     const H = GAME_HEIGHT;
     const c = this.add.container(0, 0);
     c.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setInteractive());
-    const pw = 780;
+    const pw = 960;
     const ph = 560;
     c.add(this.add.rectangle(W / 2, H / 2, pw, ph, FILL.panel, 1).setStrokeStyle(3, THEME.GOLD));
     c.add(
@@ -222,12 +236,14 @@ export class TitleScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
     HELP_LINES.forEach(([k, val], i) => {
-      const y = H / 2 - ph / 2 + 96 + i * 28;
+      const y = H / 2 - ph / 2 + 86 + i * 27;
+      c.add(this.add.text(W / 2 - pw / 2 + 32, y, k, { fontFamily: FONT, fontSize: '12px', color: hex(THEME.GOLD), fontStyle: 'bold' }).setOrigin(0, .5));
       c.add(
         this.add
-          .text(W / 2 - pw / 2 + 48, y, k.padEnd(14) + val, {
+          .text(W / 2 - pw / 2 + 200, y, val, {
             fontFamily: FONT,
-            fontSize: '15px',
+            fontSize: '12px',
+            wordWrap: { width: 710 },
             color: k ? hex(THEME.WHITE) : hex(THEME.DIM),
           })
           .setOrigin(0, 0.5),
@@ -244,7 +260,7 @@ export class TitleScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     for (const b of this.bobbers) {
       b.phase += (delta / 1000) * 2;
-      b.spr.y = 290 + Math.sin(b.phase) * 8;
+      b.spr.y = 350 + Math.sin(b.phase) * 8;
     }
   }
 
@@ -263,5 +279,8 @@ export class TitleScene extends Phaser.Scene {
     this.onKey = null;
     this.resetDialog?.destroy();
     this.resetDialog = null;
+    this.bobbers = [];
+    this.help?.destroy();
+    this.help = null;
   }
 }

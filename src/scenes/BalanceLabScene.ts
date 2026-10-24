@@ -78,45 +78,45 @@ export class BalanceLabScene extends Phaser.Scene {
       saveHistory(this.history);
     }
 
-    this.add.text(GAME_WIDTH / 2, 24, 'BALANCE LAB', T(27, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-    this.add.text(GAME_WIDTH / 2, 51, 'Configure a matchup and test campaign items without spending currency or changing your save.', T(11, THEME.DIM)).setOrigin(.5);
+    this.add.text(GAME_WIDTH / 2, 40, 'BALANCE LAB', T(27, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(GAME_WIDTH / 2, 67, 'Configure a matchup and test campaign items without spending currency or changing your save.', T(11, THEME.DIM)).setOrigin(.5);
 
     // Matchup cards: consistent boundaries and a clear visual split between sides.
     this.playerPanel = this.add.container(0, 0);
     this.opponentPanel = this.add.container(0, 0);
-    this.renderTeamPanel(this.playerPanel, 292, 'YOUR TEAM', true);
-    this.renderTeamPanel(this.opponentPanel, 900, 'OPPONENT', false);
-    this.add.text(GAME_WIDTH / 2, 163, 'VS', T(22, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.renderTeamPanel(this.playerPanel, 300, 'YOUR TEAM', true);
+    this.renderTeamPanel(this.opponentPanel, 892, 'OPPONENT', false);
+    this.add.text(GAME_WIDTH / 2, 190, 'VS', T(22, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
 
     // Difficulty strip.
-    this.add.rectangle(GAME_WIDTH / 2, 298, 820, 48, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
-    this.add.text(235, 298, 'AI DIFFICULTY', T(11, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5);
-    this.difficultyText = this.add.text(365, 298, '', T(14, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-    this.add.text(626, 298, 'Tune reaction speed, pressure, and aggression', T(11, THEME.DIM)).setOrigin(.5);
-    this.makeButton(930, 298, '−', () => this.setDifficulty(this.difficulty - .25), 38, 30, THEME.WHITE);
-    this.makeButton(976, 298, '+', () => this.setDifficulty(this.difficulty + .25), 38, 30, THEME.WHITE);
+    this.add.rectangle(GAME_WIDTH / 2, 313, 1096, 42, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
+    this.add.text(130, 313, 'AI DIFFICULTY', T(11, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5);
+    this.difficultyText = this.add.text(300, 313, '', T(14, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(650, 313, 'Tune reaction speed, pressure, and aggression', T(11, THEME.DIM)).setOrigin(.5);
+    this.makeButton(1048, 313, '−', () => this.setDifficulty(this.difficulty - .25), 38, 30, THEME.WHITE);
+    this.makeButton(1100, 313, '+', () => this.setDifficulty(this.difficulty + .25), 38, 30, THEME.WHITE);
 
     // One tidy loadout panel with tabs so both systems have room to breathe.
-    this.add.rectangle(GAME_WIDTH / 2, 446, 1010, 174, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
+    this.add.rectangle(GAME_WIDTH / 2, 449, 1096, 206, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
     this.powersPanel = this.add.container(0, 0).setDepth(20);
-    this.add.text(120, 373, 'MATCH LOADOUT', T(10, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
-    this.createLoadoutTab(230, 373, 'POWERS', 'powers', 104);
-    this.createLoadoutTab(350, 373, 'PERMANENT ITEMS', 'items', 174);
+    this.add.text(68, 366, 'MATCH LOADOUT', T(10, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
+    this.createLoadoutTab(300, 366, 'POWERS', 'powers', 104);
+    this.createLoadoutTab(456, 366, 'PERMANENT ITEMS', 'items', 174);
     this.refreshLoadoutTabs();
-    this.selectedTabText = this.add.text(980, 373, '', T(10, THEME.DIM)).setOrigin(1, .5);
+    this.selectedTabText = this.add.text(1124, 366, '', T(10, THEME.DIM)).setOrigin(1, .5);
     this.renderPowers();
 
     // A compact recent-match strip keeps useful diagnostics visible without competing with setup.
-    this.add.rectangle(GAME_WIDTH / 2, 568, 1010, 62, FILL.panel, 1).setStrokeStyle(1, 0x26394b);
-    this.add.text(115, 547, 'RECENT TESTS', T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
-    this.historyText = this.add.text(115, 566, '', T(10, THEME.WHITE, { lineSpacing: 3, wordWrap: { width: 980 } }));
-    this.noteText = this.add.text(GAME_WIDTH / 2, 608, '', T(10, THEME.GREEN)).setOrigin(.5);
+    this.add.rectangle(GAME_WIDTH / 2, 587, 1096, 54, FILL.panel, 1).setStrokeStyle(1, 0x26394b);
+    this.add.text(68, 573, 'RECENT TESTS', T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
+    this.historyText = this.add.text(222, 568, '', T(10, THEME.WHITE, { lineSpacing: 3, wordWrap: { width: 900 } }));
+    this.noteText = this.add.text(GAME_WIDTH / 2, 607, '', T(10, THEME.GREEN)).setOrigin(.5);
 
     this.setDifficulty(this.difficulty);
-    this.makeButton(180, 641, 'START MATCH', () => this.launchMatch(), 176, 34, THEME.GREEN);
-    this.makeButton(374, 641, 'EXPORT CSV', () => this.download('ice-pokey-balance.csv', balanceSummariesToCsv(this.history), 'text/csv'), 132, 34);
-    this.makeButton(520, 641, 'EXPORT JSON', () => this.download('ice-pokey-balance.json', JSON.stringify(this.history, null, 2), 'application/json'), 142, 34);
-    this.makeButton(975, 641, 'BACK TO TITLE', () => this.scene.start('TitleScene'), 170, 34, THEME.GRAY);
+    this.makeButton(146, 638, 'START MATCH', () => this.launchMatch(), 176, 34, THEME.GREEN);
+    this.makeButton(352, 638, 'EXPORT CSV', () => this.download('ice-pokey-balance.csv', balanceSummariesToCsv(this.history), 'text/csv'), 132, 34);
+    this.makeButton(502, 638, 'EXPORT JSON', () => this.download('ice-pokey-balance.json', JSON.stringify(this.history, null, 2), 'application/json'), 142, 34);
+    this.makeButton(1059, 638, 'BACK TO TITLE', () => this.scene.start('TitleScene'), 170, 34, THEME.GRAY);
 
     this.renderTeam(this.playerPanel, this.playerIndex, true);
     this.renderTeam(this.opponentPanel, this.opponentIndex, false);
@@ -147,15 +147,13 @@ export class BalanceLabScene extends Phaser.Scene {
 
   private renderTeamPanel(panel: Phaser.GameObjects.Container, x: number, heading: string, isPlayer: boolean): void {
     panel.removeAll(true);
-    const w = 330;
+    const w = 504;
     const accent = isPlayer ? THEME.GREEN : THEME.BLUE;
-    panel.add(this.add.rectangle(x + 3, 174, w, 200, 0x000000, 0.28));
-    panel.add(this.add.rectangle(x, 171, w, 200, FILL.panel, 1).setStrokeStyle(2, accent));
-    panel.add(this.add.rectangle(x, 171, w - 10, 190, 0x000000, 0).setStrokeStyle(1, 0x34465a, 0.9));
-    panel.add(this.add.rectangle(x, 76, 76, 3, accent, 1));
-    panel.add(this.add.text(x, 89, heading, T(12, accent, { fontStyle: 'bold' })).setOrigin(.5));
-    this.makeButton(x - 113, 109, '‹ PREV', () => this.cycleTeam(isPlayer, -1), 78, 27, accent);
-    this.makeButton(x + 113, 109, 'NEXT ›', () => this.cycleTeam(isPlayer, 1), 78, 27, accent);
+    panel.add(this.add.rectangle(x, 187, w, 194, FILL.panel, 1).setStrokeStyle(1, 0x34465a));
+    panel.add(this.add.rectangle(x, 91, w - 2, 2, accent));
+    panel.add(this.add.text(x, 111, heading, T(12, accent, { fontStyle: 'bold' })).setOrigin(.5));
+    this.makeButton(x - 198, 113, '‹ PREV', () => this.cycleTeam(isPlayer, -1), 78, 26, accent);
+    this.makeButton(x + 198, 113, 'NEXT ›', () => this.cycleTeam(isPlayer, 1), 78, 26, accent);
   }
 
   private getPreviewPlayerTeam(): Team {
@@ -163,21 +161,21 @@ export class BalanceLabScene extends Phaser.Scene {
   }
 
   private renderTeam(panel: Phaser.GameObjects.Container, index: number, isPlayer: boolean): void {
-    const x = isPlayer ? 292 : 900;
+    const x = isPlayer ? 300 : 892;
     const old = panel.getData('team-content') as Phaser.GameObjects.GameObject[] | undefined;
     old?.forEach(o => o.destroy());
     const team = isPlayer ? this.getPreviewPlayerTeam() : this.teams[index];
     const parts: Phaser.GameObjects.GameObject[] = [];
     const add = <G extends Phaser.GameObjects.GameObject>(g: G): G => { panel.add(g); parts.push(g); return g; };
-    const teamName = add(this.add.text(x, 132, team.name, T(18, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5));
+    const teamName = add(this.add.text(x, 145, team.name, T(18, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5));
     teamName.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.openTeamPicker(isPlayer));
     const suffix = isPlayer && this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? '  ·  MEGA TEST SLOT 1' : '';
-    add(this.add.text(x, 154, `TEAM OVR  ${averageOverall(team.players)}${suffix}`, T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
+    add(this.add.text(x, 168, `TEAM OVR  ${averageOverall(team.players)}${suffix}`, T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
     team.players.forEach((p, i) => {
-      const px = x - 125 + i * 83;
-      add(this.add.image(px, 194, `pkm-${p.sprite}`).setScale(.40));
-      add(this.add.text(px, 224, p.name, T(10, THEME.WHITE, { align: 'center', wordWrap: { width: 80 } })).setOrigin(.5));
-      add(this.add.text(px, 243, `OVR ${overall(p)}`, T(10, THEME.GOLD)).setOrigin(.5));
+      const px = x - 180 + i * 120;
+      add(this.add.image(px, 207, `pkm-${p.sprite}`).setScale(.48));
+      add(this.add.text(px, 241, p.name, T(10, THEME.WHITE, { align: 'center', wordWrap: { width: 112 } })).setOrigin(.5));
+      add(this.add.text(px, 263, `OVR ${overall(p)}`, T(10, THEME.GOLD)).setOrigin(.5));
     });
     panel.setData('team-content', parts);
   }
@@ -260,38 +258,39 @@ export class BalanceLabScene extends Phaser.Scene {
     const add = (obj: Phaser.GameObjects.GameObject) => this.powersPanel.add(obj);
     if (this.loadoutTab === 'powers') {
       POWER_DEFINITIONS.forEach((power, i) => {
-        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 350 : 840, y = 432 + row * 49;
+        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 328 : 864, y = 420 + row * 65;
         const selected = this.selectedPowerIds.has(power.id), focused = i === this.powerIndex;
-        const frame = this.add.rectangle(x, y, 458, 39, selected ? 0x16372f : FILL.plate, 1)
+        const frame = this.add.rectangle(x, y, 520, 54, selected ? 0x16372f : FILL.plate, 1)
           .setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
-        const label = this.add.text(x - 216, y - 9, `${selected ? '✓' : '○'}  ${power.name}`, T(11, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
-        const desc = this.add.text(x - 216, y + 6, power.description, T(9, THEME.DIM, { wordWrap: { width: 420 } }));
+        const label = this.add.text(x - 246, y - 17, `${selected ? '✓' : '○'}  ${power.name}`, T(13, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
+        const desc = this.add.text(x - 246, y + 3, power.description, T(11, THEME.DIM, { wordWrap: { width: 488 } }));
         [frame, label, desc].forEach(add);
         [frame, label, desc].forEach(o => o.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.powerIndex = i; this.togglePower(power.id); }));
       });
     } else {
       // The starter-form buttons are specific to the Mega Band test harness. They replace
       // player-team slot 1 with that fully evolved starter only in the isolated test match.
-      const formText = this.add.text(132, 398, 'MEGA TEST STARTER', T(9, this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? THEME.GOLD : THEME.DIM, { fontStyle: 'bold' }));
+      const formText = this.add.text(68, 396, 'MEGA TEST STARTER', T(9, this.selectedItemIds.has(ITEM_IDS.megaEvolution) ? THEME.GOLD : THEME.DIM, { fontStyle: 'bold' }));
       add(formText);
       STARTERS.forEach((starter, i) => {
-        const x = 300 + i * 170;
+        const x = 310 + i * 170;
         const selected = this.megaStarter === starter;
-        const frame = this.add.rectangle(x, 398, 150, 22, selected ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(selected ? 2 : 1, selected ? THEME.GOLD : THEME.DIM);
-        const label = this.add.text(x, 398, STARTER_LABELS[starter], T(9, selected ? THEME.GOLD : THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5);
+        const frame = this.add.rectangle(x, 396, 150, 22, selected ? FILL.plateHi : FILL.plate, 1).setStrokeStyle(selected ? 2 : 1, selected ? THEME.GOLD : THEME.DIM);
+        const label = this.add.text(x, 396, STARTER_LABELS[starter], T(9, selected ? THEME.GOLD : THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5);
         add(frame); add(label);
         frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.selectMegaStarter(starter));
         label.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.selectMegaStarter(starter));
       });
       items.forEach((item, i) => {
-        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 350 : 840, y = 426 + row * 27;
+        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 328 : 864, y = 427 + row * 34;
         const id = item.id;
         const selected = this.selectedItemIds.has(id), focused = i === this.itemIndex;
         const labelText = ITEM_TEST_DESCRIPTIONS[id] || item.description;
-        const frame = this.add.rectangle(x, y, 458, 24, selected ? 0x16372f : FILL.plate, 1)
+        const frame = this.add.rectangle(x, y, 520, 30, selected ? 0x16372f : FILL.plate, 1)
           .setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
-        const label = this.add.text(x - 218, y, `${selected ? '✓' : '○'}  ${item.name}  ·  ${labelText}`, T(9, selected ? THEME.GREEN : THEME.WHITE, { wordWrap: { width: 430 } })).setOrigin(0, .5);
-        add(frame); add(label);
+        const label = this.add.text(x - 246, y - 12, `${selected ? '✓' : '○'}  ${item.name}`, T(11, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
+        const description = this.add.text(x - 246, y + 2, labelText, T(10, THEME.GRAY));
+        add(frame); add(label); add(description);
         frame.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.itemIndex = i; this.toggleItem(id); });
         label.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.itemIndex = i; this.toggleItem(id); });
       });

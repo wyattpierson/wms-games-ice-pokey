@@ -36,9 +36,11 @@ export class PoachScene extends Phaser.Scene {
   private resourceCard?: Phaser.GameObjects.Rectangle;
   private resourceTitle?: Phaser.GameObjects.Text;
   private resourceSubtitle?: Phaser.GameObjects.Text;
-  private resourcePreviewText?: Phaser.GameObjects.Text;
+  private recruitPreview!: Phaser.GameObjects.Container;
+  private resourcePreview!: Phaser.GameObjects.Container;
+  private confirmButton!: TextButton;
   constructor() { super('PoachScene'); }
-  init(data: { teamId: string; selected?: number }): void { this.teamId = data?.teamId ?? ''; this.selected = Math.max(0, data?.selected ?? 0); this.sourceCards = []; this.ownCards = []; this.statRows = []; this.resourceIndex = -1; this.resourceCard = undefined; this.resourceTitle = undefined; this.resourceSubtitle = undefined; this.resourcePreviewText = undefined; }
+  init(data: { teamId: string; selected?: number }): void { this.teamId = data?.teamId ?? ''; this.selected = Math.max(0, data?.selected ?? 0); this.sourceCards = []; this.ownCards = []; this.statRows = []; this.resourceIndex = -1; this.resourceCard = undefined; this.resourceTitle = undefined; this.resourceSubtitle = undefined; }
 
   create(): void {
     wireShutdown(this);
@@ -48,12 +50,12 @@ export class PoachScene extends Phaser.Scene {
     const bossZone = ZONES.map(z => resolveWorldZone(z.id) || z).find(z => z.bossId === this.teamId);
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.GREEN);
-    this.add.text(W / 2, 30, bossZone ? 'CHOOSE BOSS REWARD' : 'RECRUIT A PLAYER', T(29, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(W / 2, 36, bossZone ? 'CHOOSE BOSS REWARD' : 'RECRUIT A PLAYER', T(29, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
     this.add.text(W / 2, 62, bossZone ? `Choose one Pokémon from ${source.name}, or take ${bossZone.resourceName} instead. Pokémon join your bench.` : `Choose one Pokémon from ${source.name}. It joins your bench; your active lineup stays intact.`, T(13, THEME.DIM)).setOrigin(.5);
     this.add.text(LEFT, 112, `TAKE FROM  ${source.name.toUpperCase()}`, T(13, THEME.GREEN, { fontStyle: 'bold' })).setOrigin(.5);
-    this.add.text(RIGHT, 112, 'YOUR ACTIVE LINEUP', T(13, THEME.RED, { fontStyle: 'bold' })).setOrigin(.5);
+    this.add.text(RIGHT, 112, 'YOUR ACTIVE LINEUP', T(13, THEME.BLUE, { fontStyle: 'bold' })).setOrigin(.5);
     this.add.rectangle(LEFT, 126, CARD_W, 3, THEME.GREEN, 1);
-    this.add.rectangle(RIGHT, 126, CARD_W, 3, THEME.RED, 1);
+    this.add.rectangle(RIGHT, 126, CARD_W, 3, THEME.BLUE, 1);
 
     const sourcePlayers = source.players;
     sourcePlayers.forEach((p, i) => {
@@ -67,8 +69,8 @@ export class PoachScene extends Phaser.Scene {
     if (bossZone) {
       this.resourceIndex = sourcePlayers.length;
       this.resourceCard = this.add.rectangle(LEFT, 574, CARD_W, 66, FILL.panel, 1).setStrokeStyle(2, THEME.GOLD).setInteractive({ useHandCursor: true });
-      this.resourceTitle = this.add.text(LEFT, 562, `ISLAND RESOURCE  ·  ${bossZone.resourceName.toUpperCase()}`, T(12, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-      this.resourceSubtitle = this.add.text(LEFT, 587, 'Permanent campaign resource · choose instead of a Pokémon', T(9, THEME.DIM, { align: 'center', wordWrap: { width: CARD_W - 20 } })).setOrigin(.5);
+      this.resourceTitle = this.add.text(LEFT, 562, `+1 ${bossZone.resourceName.toUpperCase()}`, T(12, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
+      this.resourceSubtitle = this.add.text(LEFT, 587, 'ISLAND RESOURCE · KEPT BETWEEN YEARS', T(9, THEME.DIM, { align: 'center', wordWrap: { width: CARD_W - 20 } })).setOrigin(.5);
       this.resourceCard.on('pointerover', () => { if (this.selected !== this.resourceIndex) { this.selected = this.resourceIndex; this.refresh(); } });
       this.resourceCard.on('pointerdown', () => { this.selected = this.resourceIndex; this.refresh(); this.confirmResourceReward(); });
     }
@@ -78,38 +80,56 @@ export class PoachScene extends Phaser.Scene {
     });
 
     const cx = W / 2;
-    this.add.rectangle(cx, 322, 380, 428, FILL.panel, 1).setStrokeStyle(2, THEME.DIM);
-    this.add.text(cx, 126, 'RECRUIT PREVIEW', T(13, THEME.DIM)).setOrigin(.5);
-    this.add.rectangle(cx - 92, 190, 84, 84, FILL.background, 1).setStrokeStyle(2, THEME.GREEN);
-    this.previewSprite = this.add.image(cx - 92, 190, 'pkm-0').setScale(72 / 96);
-    this.add.text(cx - 92, 244, 'TAKE', T(11, THEME.GREEN, { fontStyle: 'bold' })).setOrigin(.5);
-    this.previewName = this.add.text(cx - 92, 262, '', T(13, THEME.WHITE)).setOrigin(.5);
-    this.add.text(cx + 92, 190, '↔', T(25, THEME.GOLD)).setOrigin(.5);
-    this.add.text(cx + 92, 244, 'COMPARE', T(11, THEME.DIM, { fontStyle: 'bold' })).setOrigin(.5);
-    this.compareName = this.add.text(cx + 92, 262, '', T(12, THEME.WHITE, { align: 'center', wordWrap: { width: 100 } })).setOrigin(.5);
-    this.previewOvr = this.add.text(cx, 286, '', T(13, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5);
-    this.add.text(cx - 150, 311, 'STAT', T(11, THEME.DIM)).setOrigin(0, .5);
-    this.add.text(cx - 28, 311, 'ACTIVE', T(11, THEME.RED)).setOrigin(1, .5);
-    this.add.text(cx + 50, 311, 'TAKE', T(11, THEME.GREEN)).setOrigin(1, .5);
-    this.add.text(cx + 150, 311, 'DIFF', T(11, THEME.DIM)).setOrigin(1, .5);
-    this.add.rectangle(cx, 323, 320, 1, THEME.DIM, .5);
-    const labels = ['HP', 'ATK', 'SPA', 'DEF', 'SDF', 'SPD'];
-    labels.forEach((label, i) => {
-      const y = 337 + i * 24;
+    this.add.rectangle(cx, 358, 380, 500, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
+    this.recruitPreview = this.add.container(0, 0);
+    this.resourcePreview = this.add.container(0, 0).setVisible(false);
+    const preview = <G extends Phaser.GameObjects.GameObject>(object: G): G => { this.recruitPreview.add(object); return object; };
+    const resource = <G extends Phaser.GameObjects.GameObject>(object: G): G => { this.resourcePreview.add(object); return object; };
+    preview(this.add.text(cx, 130, 'PLAYER COMPARISON', T(12, THEME.BLUE, { fontStyle: 'bold' })).setOrigin(.5));
+    preview(this.add.rectangle(cx - 92, 192, 76, 76, FILL.background, 1).setStrokeStyle(1, THEME.GREEN));
+    this.previewSprite = preview(this.add.image(cx - 92, 192, 'pkm-0').setScale(68 / 96));
+    preview(this.add.text(cx - 92, 245, 'RECRUIT', T(10, THEME.GREEN, { fontStyle: 'bold' })).setOrigin(.5));
+    this.previewName = preview(this.add.text(cx - 92, 264, '', T(14, THEME.WHITE)).setOrigin(.5));
+    preview(this.add.text(cx + 92, 186, 'ACTIVE', T(10, THEME.BLUE, { fontStyle: 'bold' })).setOrigin(.5));
+    this.compareName = preview(this.add.text(cx + 92, 211, '', T(14, THEME.WHITE, { align: 'center', wordWrap: { width: 145 } })).setOrigin(.5));
+    preview(this.add.text(cx + 92, 245, 'STRONGEST IN ROLE', T(9, THEME.GRAY)).setOrigin(.5));
+    this.previewOvr = preview(this.add.text(cx, 290, '', T(13, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
+    preview(this.add.text(cx - 150, 317, 'STAT', T(10, THEME.DIM)).setOrigin(0, .5));
+    preview(this.add.text(cx - 28, 317, 'ACTIVE', T(10, THEME.BLUE)).setOrigin(1, .5));
+    preview(this.add.text(cx + 50, 317, 'RECRUIT', T(10, THEME.GREEN)).setOrigin(1, .5));
+    preview(this.add.text(cx + 150, 317, 'CHANGE', T(10, THEME.DIM)).setOrigin(1, .5));
+    preview(this.add.rectangle(cx, 329, 320, 1, 0x34465a));
+    ['HP', 'ATK', 'SPA', 'DEF', 'SDF', 'SPD'].forEach((label, i) => {
+      const y = 345 + i * 24;
+      if (i % 2 === 0) preview(this.add.rectangle(cx, y, 336, 24, FILL.plate, .65));
       this.statRows.push({
-        label: this.add.text(cx - 150, y, label, T(12, THEME.GRAY)).setOrigin(0, .5),
-        own: this.add.text(cx - 28, y, '', T(12, THEME.WHITE)).setOrigin(1, .5),
-        take: this.add.text(cx + 50, y, '', T(12, THEME.WHITE)).setOrigin(1, .5),
-        diff: this.add.text(cx + 150, y, '', T(12, THEME.WHITE)).setOrigin(1, .5),
+        label: preview(this.add.text(cx - 150, y, label, T(12, THEME.GRAY)).setOrigin(0, .5)),
+        own: preview(this.add.text(cx - 28, y, '', T(12, THEME.WHITE)).setOrigin(1, .5)),
+        take: preview(this.add.text(cx + 50, y, '', T(12, THEME.WHITE)).setOrigin(1, .5)),
+        diff: preview(this.add.text(cx + 150, y, '', T(12, THEME.WHITE)).setOrigin(1, .5)),
       });
     });
-    this.resourcePreviewText = this.add.text(cx, 390, '', T(15, THEME.WHITE, { align: 'center', wordWrap: { width: 320 }, lineSpacing: 8 })).setOrigin(.5).setVisible(false);
-    this.add.text(cx, 489, 'Choose one reward. Pokémon go to the bench; resources persist between years.', T(10, THEME.DIM, { align: 'center', wordWrap: { width: 350 } })).setOrigin(.5);
-    new TextButton(this, cx, 520, 'CONFIRM REWARD', { color: THEME.GREEN, minWidth: 300, onSelect: () => this.confirmReward(this.selected) });
-    new TextButton(this, cx, 562, 'STATS GUIDE  (G)', { color: THEME.BLUE, minWidth: 300, onSelect: () => this.openStatsGuide() });
-    new TextButton(this, cx, 600, 'SKIP RECRUIT  (ESC)', { color: THEME.GRAY, minWidth: 300, onSelect: () => this.skip() });
-    this.hint = this.add.text(cx, 630, `BENCH: ${run.bench?.length ?? 0} players`, T(12, THEME.DIM)).setOrigin(.5);
-    this.add.text(cx, 654, '↑ / ↓ select · ENTER confirm · G stats · ESC skip', T(11, THEME.DIM)).setOrigin(.5);
+    preview(this.add.text(cx, 495, 'Joins your bench. Your active lineup stays intact.', T(11, THEME.GRAY, { align: 'center', wordWrap: { width: 320 } })).setOrigin(.5));
+
+    resource(this.add.text(cx, 130, 'ISLAND RESOURCE', T(12, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
+    // A small faceted crystal gives resources their own identity, without a vacant player portrait.
+    resource(this.add.rectangle(cx, 209, 88, 88, FILL.background).setStrokeStyle(1, 0x34465a));
+    const crystal = resource(this.add.graphics());
+    crystal.fillStyle(THEME.BLUE).fillPoints([{ x: cx, y: 177 }, { x: cx + 25, y: 204 }, { x: cx, y: 241 }, { x: cx - 25, y: 204 }], true);
+    crystal.fillStyle(THEME.GREEN).fillTriangle(cx, 177, cx, 241, cx - 25, 204);
+    crystal.lineStyle(2, THEME.WHITE, .8).lineBetween(cx, 177, cx + 25, 204);
+    resource(this.add.text(cx, 278, bossZone?.resourceName.toUpperCase() || '', T(22, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(.5));
+    resource(this.add.text(cx, 309, '+1  ·  PERMANENT REWARD', T(12, THEME.GREEN, { fontStyle: 'bold' })).setOrigin(.5));
+    resource(this.add.text(cx, 347, bossZone?.resourceDescription || '', T(13, THEME.GRAY, { align: 'center', wordWrap: { width: 310 }, lineSpacing: 5 })).setOrigin(.5, 0));
+    resource(this.add.rectangle(cx, 420, 320, 1, 0x34465a));
+    resource(this.add.text(cx, 441, `IN COLLECTION: ${bossZone ? getMeta().islandResources[bossZone.id] || 0 : 0}`, T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
+    resource(this.add.text(cx, 480, 'Spend in the Item Shop. Kept between years.\nReplaces this boss’s Pokémon recruit.', T(11, THEME.GRAY, { align: 'center', wordWrap: { width: 320 }, lineSpacing: 5 })).setOrigin(.5));
+
+    this.confirmButton = new TextButton(this, cx, 535, 'RECRUIT PLAYER', { color: THEME.GREEN, minWidth: 332, onSelect: () => this.confirmReward(this.selected) });
+    new TextButton(this, cx - 85, 582, 'STATS GUIDE [G]', { size: 11, color: THEME.BLUE, minWidth: 162, onSelect: () => this.openStatsGuide() });
+    new TextButton(this, cx + 85, 582, 'SKIP [ESC]', { size: 11, color: THEME.GRAY, minWidth: 162, onSelect: () => this.skip() });
+    this.hint = this.add.text(cx, 628, '', T(11, THEME.DIM)).setOrigin(.5);
+    this.add.text(cx, 647, '↑ / ↓ select · ENTER confirm · G stats · ESC skip', T(10, THEME.DIM)).setOrigin(.5);
     this.refresh();
 
     this.onKey = (e: KeyboardEvent) => {
@@ -131,25 +151,16 @@ export class PoachScene extends Phaser.Scene {
     const isResource = this.resourceIndex >= 0 && this.selected === this.resourceIndex;
     this.sourceCards.forEach((c, i) => c.setVisual({ focus: !isResource && i === this.selected, marked: !isResource && i === this.selected, dimmed: false }));
     this.ownCards.forEach(c => c.setVisual({ focus: false, marked: false, dimmed: false }));
-    if (this.resourceCard && this.resourceTitle && this.resourceSubtitle && this.resourcePreviewText) {
-      const zone = ZONES.map(z => resolveWorldZone(z.id) || z).find(z => z.bossId === this.teamId);
-      this.resourceCard.setFillStyle(isResource ? 0x153b36 : FILL.panel, 1).setStrokeStyle(isResource ? 4 : 2, isResource ? THEME.GREEN : THEME.GOLD);
+    this.recruitPreview.setVisible(!isResource);
+    this.resourcePreview.setVisible(isResource);
+    this.confirmButton.setLabel(isResource ? 'CLAIM RESOURCE' : 'RECRUIT PLAYER', isResource ? THEME.GOLD : THEME.GREEN);
+    if (this.resourceCard && this.resourceTitle && this.resourceSubtitle) {
+      this.resourceCard.setFillStyle(isResource ? 0x153b36 : FILL.panel, 1).setStrokeStyle(isResource ? 3 : 1, isResource ? THEME.GREEN : THEME.GOLD);
       this.resourceTitle.setColor(hex(isResource ? THEME.GREEN : THEME.GOLD));
       this.resourceSubtitle.setColor(hex(isResource ? THEME.WHITE : THEME.DIM));
-      this.resourcePreviewText.setVisible(isResource).setText(zone ? `${zone.resourceName}
-
-${zone.resourceDescription}
-
-This permanent resource can be spent on special Item Shop offers.` : '');
     }
     if (isResource) {
-      const zone = ZONES.map(z => resolveWorldZone(z.id) || z).find(z => z.bossId === this.teamId);
-      this.previewSprite.setVisible(false);
-      this.previewName.setText(zone?.resourceName || 'ISLAND RESOURCE').setColor(hex(THEME.GREEN));
-      this.compareName.setText('NO POKÉMON\nTAKEN');
-      this.previewOvr.setText('PERMANENT CAMPAIGN REWARD');
-      this.statRows.forEach(row => { row.label.setVisible(false); row.own.setVisible(false); row.take.setVisible(false); row.diff.setVisible(false); });
-      this.hint.setText(`BENCH: ${getRun().bench?.length ?? 0} players  ·  selected resource replaces the boss Pokémon reward`);
+      this.hint.setText('Choose one boss reward: a new recruit OR a permanent island resource.');
       return;
     }
     const taken = source.players[this.selected];
@@ -168,7 +179,7 @@ This permanent resource can be spent on special Item Shop offers.` : '');
       row.diff.setText(`${d.diff > 0 ? '+' : ''}${d.diff}`);
       row.diff.setColor(hex(d.diff > 0 ? THEME.GREEN : d.diff < 0 ? THEME.RED : THEME.GRAY));
     });
-    this.hint.setText(`BENCH: ${getRun().bench?.length ?? 0} players  ·  compared with strongest active ${taken.goalie ? 'goalie' : 'field player'}`);
+    this.hint.setText(`BENCH: ${getRun().bench?.length ?? 0} players  ·  Recruit one player to expand your roster.`);
   }
 
   private confirmReward(i: number): void {

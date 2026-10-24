@@ -39,7 +39,7 @@ class Preloader extends Phaser.Scene {
   // game never starts (this was the blank-screen bug).
   preload(): void {
     // Illustrated 16-bit archipelago artwork used by the actual overworld.
-    this.load.image('overworld-regions', new URL('./assets/overworld-regions.png', import.meta.url).href);
+    this.load.image('overworld-regions', new URL('./assets/overworld-regions-v2.png', import.meta.url).href);
     // Every roster the campaign can ever show: the starting team plus all
     // campaign teams (poached players always have a sprite loaded).
     const seen = new Set<number>();

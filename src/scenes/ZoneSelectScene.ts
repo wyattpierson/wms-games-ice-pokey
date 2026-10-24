@@ -17,12 +17,12 @@ const MAP_X = 8;
 const MAP_Y = 48;
 const MAP_W = 778;
 const MAP_H = 550;
-const MAP_SOURCE_W = 1192;
-const MAP_SOURCE_H = 843;
+const MAP_SOURCE_W = 1491;
+const MAP_SOURCE_H = 1055;
 const MAP_SX = MAP_W / MAP_SOURCE_W;
 const MAP_SY = MAP_H / MAP_SOURCE_H;
 
-type AreaId = string | 'tower' | 'home';
+type AreaId = string;
 interface MapNode {
   id: AreaId;
   sourceX: number;
@@ -36,16 +36,14 @@ interface MapNode {
 }
 
 const REGION_NODES: MapNode[] = [
-  // Coordinates refer to the label plaques in the generated reference artwork.
-  { id: 'coastal', sourceX: 239, sourceY: 255, width: 164, height: 45, title: 'COASTAL CIRCUIT', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 01  ·  OPEN', accent: 0x56df91, isZone: true },
-  { id: 'haunted', sourceX: 601, sourceY: 178, width: 160, height: 44, title: 'HAUNTED RINKS', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 02  ·  OPEN', accent: 0x80e3a3, isZone: true },
-  { id: 'summit', sourceX: 1012, sourceY: 217, width: 158, height: 44, title: 'SUMMIT LEAGUE', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 03  ·  OPEN', accent: 0x85c9ff, isZone: true },
-  { id: 'abyss', sourceX: 280, sourceY: 668, width: 150, height: 44, title: 'THE ABYSS', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 04  ·  OPEN', accent: 0xc5a1ff, isZone: true },
-  { id: 'tower', sourceX: 657, sourceY: 542, width: 172, height: 46, title: 'BATTLE TOWER', subtitle: (_c, due) => due ? 'TOURNAMENT DAY  ·  ENTER' : 'ALWAYS OPEN  ·  FAST-FORWARD', accent: 0x7fdcff },
+  // Label anchors use the same source-image coordinates as the island outlines.
+  { id: 'coastal', sourceX: 335, sourceY: 160, width: 164, height: 45, title: 'COASTAL CIRCUIT', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 01  ·  OPEN', accent: 0x56df91, isZone: true },
+  { id: 'haunted', sourceX: 1110, sourceY: 110, width: 160, height: 44, title: 'HAUNTED RINKS', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 02  ·  OPEN', accent: 0x80e3a3, isZone: true },
+  { id: 'summit', sourceX: 1210, sourceY: 635, width: 158, height: 44, title: 'SUMMIT LEAGUE', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 03  ·  OPEN', accent: 0x85c9ff, isZone: true },
+  { id: 'abyss', sourceX: 310, sourceY: 635, width: 150, height: 44, title: 'THE ABYSS', subtitle: (c, due) => c ? 'CLEARED  ·  CLOSED' : due ? 'CLOSED  ·  TOWER DAY' : 'REALM 04  ·  OPEN', accent: 0xc5a1ff, isZone: true },
+  { id: 'tower', sourceX: 745, sourceY: 597, width: 172, height: 46, title: 'BATTLE TOWER', subtitle: (_c, due) => due ? 'TOURNAMENT DAY  ·  ENTER' : 'ALWAYS OPEN  ·  FAST-FORWARD', accent: 0x7fdcff },
 ];
 
-// Positioned over the lower-right home island in the cropped map artwork.
-const HOME_NODE = { x: MAP_X + 680, y: MAP_Y + 456 };
 const TEXT_STYLE = (size: number, color: number, extra: Phaser.Types.GameObjects.Text.TextStyle = {}) => ({
   fontFamily: FONT, fontSize: `${size}px`, color: hex(color), ...extra,
 });
@@ -53,7 +51,7 @@ const TEXT_STYLE = (size: number, color: number, extra: Phaser.Types.GameObjects
 /**
  * A 16-bit Pokémon-style archipelago. The artwork is the map itself; Phaser
  * draws all status, selection, and area details dynamically so save data drives
- * the visuals rather than the baked-in labels from the reference mockup.
+ * the visuals. Island outlines and labels share the artwork coordinate system.
  */
 export class ZoneSelectScene extends Phaser.Scene {
   private onKey: ((e: KeyboardEvent) => void) | null = null;
@@ -80,13 +78,13 @@ export class ZoneSelectScene extends Phaser.Scene {
       if (enteredThisYear) meta = updateMeta({ activeIslandId: enteredThisYear.id, selectedZoneId: enteredThisYear.id });
     }
     this.selectedId = meta.activeIslandId || meta.selectedZoneId || 'coastal';
-    if (!ZONES.some((z) => z.id === this.selectedId) && this.selectedId !== 'tower' && this.selectedId !== 'home') {
+    if (!ZONES.some((z) => z.id === this.selectedId) && this.selectedId !== 'tower') {
       this.selectedId = 'coastal';
     }
 
     this.cameras.main.setBackgroundColor(0x061631);
 
-    // The reference artwork was cropped to just the archipelago; all UI is live.
+    // The illustration contains terrain only; labels and feedback are live UI.
     this.add.image(MAP_X + MAP_W / 2, MAP_Y + MAP_H / 2, 'overworld-regions').setDisplaySize(MAP_W, MAP_H);
     this.add.rectangle(MAP_X + MAP_W / 2, MAP_Y + MAP_H / 2, MAP_W, MAP_H, 0xffffff, 0)
       .setStrokeStyle(2, 0x1c65a6, 1);
@@ -105,13 +103,9 @@ export class ZoneSelectScene extends Phaser.Scene {
       : `YEAR ${calendar.seasonYear}  ·  ${calendar.daysRemaining} DAYS LEFT`;
     this.add.text(GAME_WIDTH - 28, 26, dayText, TEXT_STYLE(12, calendar.daysRemaining <= 45 ? THEME.RED : THEME.GOLD, { fontStyle: 'bold' })).setOrigin(1, 0.5);
 
-    // Side pane frame and pixel corners.
-    const paneX = 964, paneY = 318, paneW = 338, paneH = 540;
-    this.add.rectangle(paneX, paneY, paneW, paneH, 0x061a3a, 0.98).setStrokeStyle(3, THEME.GOLD, 1);
-    this.add.rectangle(paneX, paneY, paneW - 8, paneH - 8, 0x000000, 0).setStrokeStyle(1, 0x32649b, 0.95);
-    [[paneX - paneW / 2 + 10, paneY - paneH / 2 + 10], [paneX + paneW / 2 - 10, paneY - paneH / 2 + 10], [paneX - paneW / 2 + 10, paneY + paneH / 2 - 10], [paneX + paneW / 2 - 10, paneY + paneH / 2 - 10]].forEach(([x, y]) => {
-      this.add.rectangle(x, y, 8, 8, THEME.GOLD, 1);
-    });
+    // Single-pixel framing keeps the live panel as crisp as the map art.
+    this.add.rectangle(964, 323, 338, 550, 0x081a30).setStrokeStyle(1, 0x426281);
+    this.add.rectangle(964, 50, 336, 3, THEME.GOLD);
 
     this.paintMapNodes();
     this.paintDetails();
@@ -122,16 +116,14 @@ export class ZoneSelectScene extends Phaser.Scene {
       if (e.code === 'Enter' || e.code === 'Space') { this.activateSelection(); return; }
       if (e.code === 'KeyT') { if (!getMeta().activeIslandId) this.enterTower(); return; }
       if (e.code === 'KeyL') { this.scene.start('LineupScene', { returnTo: 'ZoneSelectScene' }); return; }
-      if (e.code === 'KeyS') { if (!getMeta().activeIslandId) this.scene.start('StoreScene', { returnTo: 'ZoneSelectScene' }); return; }
-      if (e.code === 'KeyH') { if (!getMeta().activeIslandId) this.selectArea('home'); return; }
+      if (e.code === 'KeyS') { this.scene.start('StoreScene', { returnTo: 'ZoneSelectScene' }); return; }
     };
     this.onKey = onKey;
     window.addEventListener('keydown', onKey);
   }
 
   private pointFromSource(x: number, y: number): { x: number; y: number } {
-    // Source mockup begins at y=80; the crop retains only the map illustration.
-    return { x: MAP_X + x * MAP_SX, y: MAP_Y + (y - 80) * MAP_SY };
+    return { x: MAP_X + x * MAP_SX, y: MAP_Y + y * MAP_SY };
   }
 
   private addNodeObject<T extends Phaser.GameObjects.GameObject>(object: T): T {
@@ -153,20 +145,36 @@ export class ZoneSelectScene extends Phaser.Scene {
     // Points are in source-image pixels so the shapes stay aligned with the art
     // if MAP_W / MAP_H changes. This avoids giant rectangular targets over ocean.
     const islandShapes: { id: AreaId; points: [number, number][] }[] = [
-      { id: 'coastal', points: [[47,224],[61,184],[82,144],[111,112],[149,91],[192,82],[235,88],[274,105],[313,132],[346,167],[376,204],[400,240],[397,277],[379,315],[350,350],[312,376],[276,393],[238,393],[204,377],[169,362],[137,339],[108,310],[82,280],[61,254]] },
-      { id: 'haunted', points: [[425,219],[431,180],[445,143],[467,111],[491,86],[522,67],[558,55],[592,60],[628,77],[659,99],[686,126],[716,143],[753,163],[785,191],[806,222],[802,250],[779,276],[746,296],[704,309],[660,317],[614,316],[569,307],[528,294],[491,279],[461,261],[439,240]] },
-      { id: 'summit', points: [[811,246],[811,204],[821,166],[837,128],[855,94],[878,62],[903,43],[930,34],[956,45],[980,61],[1004,33],[1034,18],[1068,29],[1102,48],[1134,79],[1161,116],[1182,156],[1188,198],[1181,240],[1168,278],[1153,315],[1129,350],[1103,381],[1071,410],[1035,438],[1002,450],[969,442],[936,424],[909,399],[880,370],[855,339],[835,307],[820,276]] },
-      { id: 'abyss', points: [[51,604],[62,562],[79,524],[104,490],[130,462],[161,444],[194,439],[226,452],[255,471],[284,483],[316,492],[347,512],[378,531],[406,555],[431,581],[454,612],[467,642],[463,677],[446,710],[421,743],[391,772],[357,797],[322,816],[286,822],[249,816],[214,805],[180,791],[146,775],[116,751],[91,721],[69,689],[53,655]] },
-      { id: 'tower', points: [[426,420],[440,391],[461,364],[486,343],[515,327],[546,315],[576,311],[608,318],[638,329],[668,347],[697,367],[725,388],[750,406],[774,430],[797,456],[817,484],[837,514],[853,544],[856,572],[843,594],[817,613],[786,629],[750,642],[712,652],[674,660],[635,660],[598,652],[565,640],[533,624],[503,606],[478,582],[458,554],[443,525],[432,496],[426,466]] },
-      { id: 'home', points: [[908,627],[925,600],[947,578],[972,571],[994,581],[1016,592],[1036,603],[1058,620],[1080,645],[1095,668],[1101,691],[1091,713],[1073,731],[1049,745],[1020,752],[992,746],[968,732],[945,714],[927,691],[914,666]] },
+      { id: 'coastal', points: [[97, 205], [111, 176], [168, 135], [223, 111], [263, 111], [267, 75], [309, 41], [373, 27], [414, 32], [441, 76], [481, 78], [506, 122], [540, 142], [559, 171], [551, 207], [540, 232], [572, 257], [576, 280], [550, 323], [505, 342], [467, 377], [451, 416], [414, 438], [342, 444], [299, 420], [276, 379], [235, 351], [199, 327], [194, 291], [143, 278], [111, 250]] },
+      { id: 'haunted', points: [[841, 179], [878, 147], [901, 117], [924, 130], [966, 75], [988, 94], [1015, 65], [1047, 23], [1062, 66], [1126, 20], [1150, 63], [1211, 17], [1260, 81], [1292, 86], [1316, 45], [1332, 91], [1356, 103], [1348, 143], [1369, 154], [1356, 187], [1315, 212], [1324, 267], [1312, 306], [1272, 343], [1235, 346], [1189, 376], [1149, 393], [1100, 392], [1080, 386], [1055, 401], [1022, 383], [989, 359], [965, 365], [933, 359], [921, 329], [922, 316], [886, 299], [866, 277], [863, 255], [883, 228], [863, 208]] },
+      { id: 'summit', points: [[938, 803], [981, 777], [980, 746], [1003, 724], [978, 703], [980, 662], [1017, 631], [1045, 605], [1059, 557], [1100, 519], [1125, 530], [1159, 487], [1208, 526], [1232, 538], [1251, 520], [1290, 568], [1312, 552], [1353, 588], [1376, 605], [1414, 631], [1430, 662], [1460, 680], [1453, 701], [1427, 723], [1442, 755], [1428, 780], [1453, 791], [1453, 823], [1417, 847], [1426, 872], [1390, 899], [1420, 930], [1417, 965], [1375, 1008], [1322, 1035], [1260, 1016], [1211, 984], [1191, 958], [1163, 946], [1143, 982], [1110, 998], [1070, 984], [1062, 945], [1039, 922], [999, 902], [987, 872], [961, 852], [939, 839]] },
+      { id: 'abyss', points: [[65, 668], [100, 639], [128, 610], [151, 630], [179, 575], [203, 611], [235, 598], [271, 609], [308, 577], [337, 587], [348, 544], [374, 582], [392, 562], [425, 605], [458, 577], [491, 610], [513, 647], [548, 644], [558, 668], [584, 676], [601, 715], [595, 753], [559, 784], [542, 786], [542, 854], [578, 875], [595, 906], [589, 942], [554, 961], [540, 979], [508, 954], [465, 938], [425, 916], [399, 873], [380, 882], [359, 834], [342, 850], [320, 907], [272, 938], [234, 925], [201, 935], [170, 911], [147, 889], [142, 845], [118, 810], [118, 764], [83, 753], [67, 721]] },
+      { id: 'tower', points: [[499, 487], [525, 459], [571, 433], [590, 391], [626, 389], [663, 369], [698, 373], [723, 377], [744, 342], [763, 371], [803, 376], [830, 366], [864, 387], [884, 425], [920, 441], [946, 472], [957, 511], [944, 530], [958, 554], [947, 578], [914, 585], [906, 617], [867, 644], [854, 672], [822, 676], [794, 663], [765, 684], [734, 681], [702, 689], [671, 669], [637, 651], [613, 635], [611, 595], [566, 584], [541, 563], [538, 532], [507, 517]] },
     ];
+    const highlights = new Map<AreaId, (hovered: boolean) => void>();
     islandShapes.forEach((area) => {
       const zoneDefinition = resolveWorldZone(area.id);
       const cleared = !!zoneDefinition && run.results[zoneDefinition.bossId] === 'win';
       const activeIslandId = getMeta().activeIslandId;
       const selectable = zoneDefinition
         ? (activeIslandId ? activeIslandId === area.id : !cleared && !tournamentDue)
-        : !activeIslandId && (area.id === 'tower' || area.id === 'home');
+        : !activeIslandId && area.id === 'tower';
+      const outline = this.addNodeObject(this.add.graphics());
+      const points = area.points.map(([x, y]) => new Phaser.Geom.Point(MAP_X + x * MAP_SX, MAP_Y + y * MAP_SY));
+      const highlight = (hovered: boolean) => {
+        outline.clear();
+        const selected = this.selectedId === area.id;
+        if (!hovered && !selected) return;
+        const color = hovered ? 0xe4faff : THEME.GOLD;
+        outline.fillStyle(color, hovered ? 0.16 : 0.045);
+        outline.fillPoints(points, true);
+        outline.lineStyle(hovered ? 7 : 5, color, 0.16);
+        outline.strokePoints(points, true);
+        outline.lineStyle(hovered ? 2 : 1, color, hovered ? 1 : 0.7);
+        outline.strokePoints(points, true);
+      };
+      highlights.set(area.id, highlight);
+      highlight(false);
       if (!selectable) return;
 
       const xs = area.points.map((point) => point[0]);
@@ -188,6 +196,8 @@ export class ZoneSelectScene extends Phaser.Scene {
       hit.setInteractive(polygon, Phaser.Geom.Polygon.Contains);
       if (hit.input) hit.input.cursor = 'pointer';
       hit.on('pointerdown', () => this.selectArea(area.id));
+      hit.on('pointerover', () => highlight(true));
+      hit.on('pointerout', () => highlight(false));
     });
 
     REGION_NODES.forEach((node) => {
@@ -214,24 +224,10 @@ export class ZoneSelectScene extends Phaser.Scene {
         const hit = this.addNodeObject(this.add.rectangle(pos.x, pos.y, node.width, node.height, 0xffffff, 0.001)
           .setInteractive({ useHandCursor: true }));
         hit.on('pointerdown', () => this.selectArea(node.id));
-        hit.on('pointerover', () => { panel.setStrokeStyle(3, THEME.GOLD, 1); });
-        hit.on('pointerout', () => { panel.setStrokeStyle(this.selectedId === node.id ? 3 : 2, this.selectedId === node.id ? THEME.GOLD : accent, 1); });
+        hit.on('pointerover', () => { panel.setStrokeStyle(3, THEME.GOLD, 1); highlights.get(node.id)?.(true); });
+        hit.on('pointerout', () => { panel.setStrokeStyle(this.selectedId === node.id ? 3 : 2, this.selectedId === node.id ? THEME.GOLD : accent, 1); highlights.get(node.id)?.(false); });
       }
     });
-
-    // Fifth outer island is the player's home base. Its two services are in the side pane.
-    const homeSelected = this.selectedId === 'home';
-    const homePlate = this.addNodeObject(this.add.rectangle(HOME_NODE.x, HOME_NODE.y, 128, 30, 0x061b3a, 0.99)
-      .setStrokeStyle(homeSelected ? 3 : 2, homeSelected ? THEME.GOLD : 0xffd16d, 1));
-    this.addNodeObject(this.add.text(HOME_NODE.x, HOME_NODE.y - 1, 'HOME BASE', TEXT_STYLE(10, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(0.5));
-    this.addNodeObject(this.add.text(HOME_NODE.x, HOME_NODE.y + 10, 'TEAM  ·  STORE', TEXT_STYLE(7, 0xffd16d)).setOrigin(0.5));
-    const homeActive = !getMeta().activeIslandId;
-    if (homeActive) {
-      const homeHit = this.addNodeObject(this.add.rectangle(HOME_NODE.x, HOME_NODE.y, 144, 48, 0xffffff, 0.001).setInteractive({ useHandCursor: true }));
-      homeHit.on('pointerdown', () => this.selectArea('home'));
-      homeHit.on('pointerover', () => homePlate.setStrokeStyle(3, THEME.GOLD, 1));
-      homeHit.on('pointerout', () => homePlate.setStrokeStyle(this.selectedId === 'home' ? 3 : 2, this.selectedId === 'home' ? THEME.GOLD : 0xffd16d, 1));
-    } else { this.addNodeObject(this.add.text(HOME_NODE.x, HOME_NODE.y + 22, 'LOCKED · FINISH ISLAND', TEXT_STYLE(7, THEME.GRAY, { align: 'center' })).setOrigin(0.5)); }
 
     const footer = getMeta().activeIslandId ? 'ISLAND COMMITMENT  ·  BEAT THE BOSS TO LEAVE  ·  ESC TO TITLE' : 'CLICK ANY PART OF A REGION  ·  ENTER TO TRAVEL  ·  ESC TO TITLE';
     this.addNodeObject(this.add.text(25, 579, footer, TEXT_STYLE(9, 0xf0f4ff, { backgroundColor: '#071a38', padding: { x: 6, y: 4 } })).setOrigin(0, 0.5));
@@ -240,125 +236,81 @@ export class ZoneSelectScene extends Phaser.Scene {
   private paintDetails(): void {
     this.clearUi(this.detailUi);
     const add = <T extends Phaser.GameObjects.GameObject>(object: T): T => { this.detailUi.push(object); return object; };
-    const x = 808, contentW = 308;
+    const x = 814, right = 1114, center = 964;
+    const text = (px: number, y: number, label: string, size = 11, color = THEME.GRAY, bold = false) =>
+      add(this.add.text(px, y, label, TEXT_STYLE(size, color, { fontStyle: bold ? 'bold' : 'normal' })));
+    const rule = (y: number) => add(this.add.rectangle(center, y, 300, 1, 0x29435e));
     const meta = getMeta();
     const run = getRun();
     const zone = resolveWorldZone(this.selectedId);
     const isTower = this.selectedId === 'tower';
-    const isHome = this.selectedId === 'home';
     const cleared = !!zone && run.results[zone.bossId] === 'win';
     const due = isTournamentDue();
-    const committed = !!meta.activeIslandId;
+    const isActive = !!zone && meta.activeIslandId === zone.id;
+    const canEnter = isTower ? !meta.activeIslandId : isActive || (!meta.activeIslandId && !due && !cleared);
+    const accent = REGION_NODES.find((node) => node.id === this.selectedId)?.accent || THEME.BLUE;
+    const index = ZONES.findIndex((z) => z.id === zone?.id);
 
-    add(this.add.text(x, 66, 'AREA INTEL', TEXT_STYLE(10, THEME.GOLD, { fontStyle: 'bold' })));
-    add(this.add.rectangle(964, 84, 306, 1, 0x34699d, 1));
+    text(x, 68, isTower ? 'YEAR-END TOURNAMENT' : `REALM ${String(index + 1).padStart(2, '0')} / 04`, 10, accent, true);
+    text(right, 68, isTower ? '[T]' : `[${index + 1}]`, 10, THEME.GRAY).setOrigin(1, 0);
+    text(x, 91, isTower ? 'BATTLE TOWER' : zone?.name || 'COASTAL CIRCUIT', 20, THEME.WHITE, true);
+    const status = cleared ? 'CLEARED' : isActive ? 'IN PROGRESS' : !canEnter ? 'TRAVEL LOCKED' : due && isTower ? 'TOURNAMENT DAY' : 'OPEN TO TRAVEL';
+    const statusColor = cleared || isActive ? THEME.GREEN : canEnter ? accent : THEME.GRAY;
+    add(this.add.rectangle(x + 3, 130, 6, 6, statusColor));
+    text(x + 14, 123, status, 10, statusColor, true);
+    rule(146);
+    const description = isTower
+      ? 'The year-end gauntlet. Face the toughest teams and climb the tower.'
+      : zone?.description || '';
+    text(x, 162, description, 12, 0xd7e5f7).setWordWrapWidth(300).setLineSpacing(4);
 
-    const title = isHome ? 'HOME BASE' : isTower ? 'BATTLE TOWER' : zone?.name || 'COASTAL CIRCUIT';
-    add(this.add.text(x, 95, title, TEXT_STYLE(17, THEME.WHITE, { fontStyle: 'bold', wordWrap: { width: contentW } })));
-
-    const status = isHome ? (committed ? 'LOCKED  ·  FINISH ISLAND' : 'YOUR HEADQUARTERS') : isTower ? (committed ? 'LOCKED  ·  FINISH ISLAND' : 'ALWAYS OPEN') : cleared ? 'ISLAND CLEARED  ·  CLOSED' : committed ? 'ISLAND IN PROGRESS  ·  BOSS AWAITS' : due ? 'CLOSED  ·  TOURNAMENT DAY' : `REALM ${String(ZONES.findIndex((z) => z.id === zone!.id) + 1).padStart(2, '0')}  ·  AVAILABLE`;
-    const statusColor = committed ? (zone?.id === meta.activeIslandId ? THEME.GREEN : THEME.RED) : isHome ? 0xffd16d : isTower ? THEME.BLUE : cleared ? THEME.GREEN : due ? THEME.RED : THEME.GOLD;
-    add(this.add.rectangle(964, 126, 306, 24, cleared ? 0x10452e : 0x0d2d52, 1).setStrokeStyle(1, statusColor, 1));
-    add(this.add.text(964, 126, status, TEXT_STYLE(9, statusColor, { fontStyle: 'bold' })).setOrigin(0.5));
-
-    let description = '';
-    if (isHome) description = committed ? 'Home Base is unavailable while you are committed to an island. Beat its boss to return here.' : 'Your headquarters between trips. Manage your active lineup, inspect recruits, and spend credits on permanent upgrades.';
-    else if (isTower) description = committed ? 'The Tower must wait. Finish the island boss before leaving this circuit.' : 'The year-end gauntlet. Entering before the countdown ends fast-forwards the remaining days. Once it starts, the realms are closed for the year.';
-    else description = (zone?.description || '') + (zone && meta.activeIslandId === zone.id ? ' You are committed to this island until its boss is defeated. If the calendar runs out, you can finish this island before entering the Tower.' : '');
-    add(this.add.text(x, 148, description, TEXT_STYLE(11, 0xd7e5f7, { wordWrap: { width: contentW }, lineSpacing: 3 } )).setOrigin(0, 0));
-    add(this.add.rectangle(964, 218, 306, 1, 0x34699d, 1));
-
-    if (zone) {
-      const index = ZONES.findIndex((z) => z.id === zone.id);
-      const teams = [...zone.opponents, zone.bossId].map(teamById);
-      const opponentOvr = Math.round(teams.reduce((sum: number, team: Team) => sum + averageOverall(team.players), 0) / Math.max(1, teams.length));
-      const difficulty = [25, 49, 76, 96][index] || 25;
-      const difficultyName = ['STARTER-FRIENDLY', 'CHALLENGING', 'ELITE', 'EXTREME'][index] || 'CHALLENGING';
-      add(this.add.text(x, 235, 'REALM DIFFICULTY', TEXT_STYLE(9, THEME.GOLD, { fontStyle: 'bold' })));
-      add(this.add.text(GAME_WIDTH - 32, 235, `TIER ${index + 1} / 4`, TEXT_STYLE(9, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(1, 0));
-      add(this.add.rectangle(964, 255, 306, 12, 0x0b2a4b, 1).setStrokeStyle(1, 0x34699d, 1));
-      add(this.add.rectangle(811 + (306 * difficulty / 100) / 2, 255, 306 * difficulty / 100, 8, zone.id === 'coastal' ? 0x58db8b : zone.id === 'haunted' ? 0x79d4bb : zone.id === 'summit' ? 0x7fc5ff : 0xb59afa, 1));
-      add(this.add.text(x, 270, difficultyName, TEXT_STYLE(9, 0xd7e5f7)));
-      add(this.add.rectangle(964, 300, 306, 44, 0x092444, 1).setStrokeStyle(1, 0x34699d, 1));
-      add(this.add.text(825, 286, 'OPPONENT OVERALL', TEXT_STYLE(9, THEME.BLUE, { fontStyle: 'bold' })));
-      add(this.add.text(1100, 301, String(opponentOvr), TEXT_STYLE(23, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(1, 0.5));
-      add(this.add.text(825, 316, 'Average roster rating across the realm', TEXT_STYLE(8, THEME.GRAY)));
-
-      const teamOvr = averageOverall(run.userTeam.players);
-      add(this.add.rectangle(964, 355, 306, 40, 0x092444, 1).setStrokeStyle(1, THEME.GREEN, 1));
-      add(this.add.text(825, 345, 'YOUR TEAM OVERALL', TEXT_STYLE(9, THEME.GREEN, { fontStyle: 'bold' })));
-      add(this.add.text(1100, 356, String(teamOvr), TEXT_STYLE(21, THEME.WHITE, { fontStyle: 'bold' })).setOrigin(1, 0.5));
-    } else if (isTower) {
-      add(this.add.text(x, 235, 'TOURNAMENT DIFFICULTY', TEXT_STYLE(9, THEME.GOLD, { fontStyle: 'bold' })));
-      add(this.add.rectangle(964, 255, 306, 12, 0x0b2a4b, 1).setStrokeStyle(1, 0x34699d, 1));
-      add(this.add.rectangle(964, 255, 296, 8, 0xff8b67, 1));
-      add(this.add.text(x, 270, 'EXTREME  ·  FLOOR ONE IS A WALL', TEXT_STYLE(9, THEME.RED)));
-      add(this.add.text(x, 297, 'AI difficulty', TEXT_STYLE(9, THEME.BLUE)));
-      add(this.add.text(1100, 306, '97%', TEXT_STYLE(22, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(1, 0.5));
-      add(this.add.text(x, 329, due ? 'Tournament is ready to begin.' : 'Entering now skips the remaining calendar.', TEXT_STYLE(8, THEME.GRAY)));
-    } else {
-      add(this.add.text(x, 239, 'BETWEEN MATCHES', TEXT_STYLE(9, THEME.GOLD, { fontStyle: 'bold' })));
-      add(this.add.text(x, 260, 'Time and permanent upgrades are managed here.', TEXT_STYLE(10, 0xd7e5f7, { wordWrap: { width: contentW } })));
+    text(x, 235, isTower ? 'TOURNAMENT DIFFICULTY' : 'REALM DIFFICULTY', 10, THEME.GRAY, true);
+    const tier = isTower ? 4 : index + 1;
+    for (let i = 0; i < 4; i++) {
+      add(this.add.rectangle(x + 35 + i * 77, 262, 70, 6, i < tier ? accent : 0x263b50));
     }
+    text(x, 277, isTower ? 'EXTREME' : ['STARTER-FRIENDLY', 'CHALLENGING', 'ELITE', 'EXTREME'][index], 10, accent, true);
 
-    add(this.add.rectangle(964, zone ? 382 : 367, 306, 1, 0x34699d, 1));
-    add(this.add.text(x, zone ? 388 : 380, 'YOUR STARTER', TEXT_STYLE(9, THEME.GOLD, { fontStyle: 'bold' })));
+    const teams = zone ? [...zone.opponents, zone.bossId].map(teamById) : [];
+    const opponentOvr = teams.length ? Math.round(teams.reduce((sum: number, team: Team) => sum + averageOverall(team.players), 0) / teams.length) : 97;
+    [[x + 72, 'YOUR TEAM', String(averageOverall(run.userTeam.players)), THEME.GREEN],
+      [right - 72, zone ? 'OPPONENT AVG' : 'AI DIFFICULTY', `${opponentOvr}${zone ? '' : '%'}`, accent]].forEach(([cx, label, value, color]) => {
+      add(this.add.rectangle(Number(cx), 331, 144, 62, 0x102840).setStrokeStyle(1, 0x29435e));
+      text(Number(cx), 310, String(label), 10, Number(color), true).setOrigin(0.5, 0);
+      text(Number(cx), 328, String(value), 25, THEME.WHITE, true).setOrigin(0.5, 0);
+    });
 
     const starterId = meta.starter as StarterId | null;
     if (starterId && STARTER_EVOLUTIONS[starterId]) {
       const xp = meta.starterXp[starterId] || 0;
       const evolutions = STARTER_EVOLUTIONS[starterId];
       const current = [...evolutions].reverse().find((evo) => xp >= evo.at) || evolutions[0];
-      const starterY = zone ? 434 : 428;
-      add(this.add.rectangle(964, starterY, 306, 66, 0x092444, 1).setStrokeStyle(1, 0x34699d, 1));
-      add(this.add.image(848, starterY, `pkm-${current.sprite}`).setDisplaySize(54, 54));
-      add(this.add.text(889, starterY - 17, current.name.toUpperCase(), TEXT_STYLE(13, THEME.WHITE, { fontStyle: 'bold' })));
-      add(this.add.text(889, starterY + 4, `${xp} XP  ·  ${xp >= 100 ? 'FINAL EVOLUTION' : `NEXT FORM AT ${evolutions.find((e) => e.at > xp)?.at ?? 100} XP`}`, TEXT_STYLE(9, THEME.GREEN)));
-      add(this.add.text(889, starterY + 23, 'YOUR CAMPAIGN PARTNER', TEXT_STYLE(8, THEME.GRAY)));
+      add(this.add.image(x + 24, 401, `pkm-${current.sprite}`).setDisplaySize(48, 48));
+      text(x + 58, 376, 'CAMPAIGN PARTNER', 9, THEME.GRAY, true);
+      text(x + 58, 391, current.name.toUpperCase(), 13, THEME.WHITE, true);
+      const next = evolutions.find((evo) => evo.at > xp);
+      text(x + 58, 411, `${xp} XP  /  ${next ? `NEXT FORM ${next.at} XP` : 'FINAL EVOLUTION'}`, 10, THEME.GREEN);
     } else {
-      const starterY = zone ? 434 : 428;
-      add(this.add.rectangle(964, starterY, 306, 66, 0x092444, 1).setStrokeStyle(1, 0x34699d, 1));
-      const starters = [246, 443, 371];
-      starters.forEach((sprite, i) => add(this.add.image(870 + i * 92, starterY - 5, `pkm-${sprite}`).setDisplaySize(38, 38)));
-      add(this.add.text(964, starterY + 23, 'CHOOSE YOUR STARTER TO BEGIN', TEXT_STYLE(8, THEME.GRAY)).setOrigin(0.5));
+      text(x, 389, 'Choose a starter to begin your journey.', 11, THEME.GRAY).setWordWrapWidth(300);
     }
-
-    // Team management stays available even while island travel is locked.
-    // The lock prevents leaving the island; it should never prevent lineup planning.
-    if (zone) {
-      const isActive = meta.activeIslandId === zone.id;
-      const canEnter = isActive || (!meta.activeIslandId && !due && !cleared);
-      add(new TextButton(this, 964, 488, 'MANAGE TEAM', {
-        color: THEME.GREEN, minWidth: 284,
-        onSelect: () => this.scene.start('LineupScene', { returnTo: 'ZoneSelectScene' }),
-      }));
-      add(new TextButton(this, 964, 532, cleared ? 'ISLAND CLEARED' : isActive ? 'CONTINUE ISLAND' : due ? 'REALMS CLOSED TODAY' : meta.activeIslandId ? 'FINISH CURRENT ISLAND FIRST' : 'ENTER REALM', {
-        color: cleared ? THEME.GREEN : canEnter ? THEME.GOLD : THEME.GRAY,
-        minWidth: 284,
-        onSelect: canEnter ? () => this.enter(zone.id) : undefined,
-      }));
-    } else if (isTower) {
-      add(new TextButton(this, 964, 488, 'MANAGE TEAM', {
-        color: THEME.GREEN, minWidth: 284,
-        onSelect: () => this.scene.start('LineupScene', { returnTo: 'ZoneSelectScene' }),
-      }));
-      add(new TextButton(this, 964, 532, 'ENTER BATTLE TOWER', { color: THEME.GOLD, minWidth: 284, onSelect: () => this.enterTower() }));
-    } else {
-      const manage = new TextButton(this, 888, 490, committed ? 'ISLAND LOCKED' : 'MANAGE TEAM', { color: committed ? THEME.GRAY : THEME.GREEN, minWidth: 146, onSelect: committed ? undefined : () => this.scene.start('LineupScene', { returnTo: 'ZoneSelectScene' }) });
-      const store = new TextButton(this, 1040, 490, committed ? 'ISLAND LOCKED' : 'ITEM SHOP', { color: committed ? THEME.GRAY : THEME.GOLD, minWidth: 146, onSelect: committed ? undefined : () => this.scene.start('StoreScene', { returnTo: 'ZoneSelectScene' }) });
-      add(manage); add(store);
-    }
-
-    const footerHint = committed
-      ? 'L  MANAGE TEAM  ·  ENTER  CONTINUE ISLAND'
-      : '1–4 SELECT REALMS  ·  L TEAM  ·  T TOWER  ·  H HOME';
-    add(this.add.text(964, 568, footerHint, TEXT_STYLE(8, committed ? THEME.GREEN : THEME.GRAY)).setOrigin(0.5));
+    rule(439);
+    text(x, 452, 'TEAM SERVICES', 10, THEME.GRAY, true);
+    text(right, 452, `${meta.currency} CR`, 11, THEME.GOLD, true).setOrigin(1, 0);
+    add(new TextButton(this, 888, 488, 'MANAGE TEAM [L]', { size: 11, color: THEME.GREEN, minWidth: 148,
+      onSelect: () => this.scene.start('LineupScene', { returnTo: 'ZoneSelectScene' }) }));
+    add(new TextButton(this, 1042, 488, 'ITEM SHOP [S]', { size: 11, color: THEME.BLUE, minWidth: 144,
+      onSelect: () => this.scene.start('StoreScene', { returnTo: 'ZoneSelectScene' }) }));
+    const action = cleared ? 'ISLAND CLEARED' : isActive ? 'CONTINUE ISLAND' : !canEnter ? 'TRAVEL LOCKED' : isTower ? 'ENTER BATTLE TOWER' : 'ENTER REALM';
+    add(new TextButton(this, center, 532, action, { size: 14, color: canEnter ? THEME.GOLD : THEME.GRAY, minWidth: 300,
+      onSelect: canEnter ? () => this.activateSelection() : undefined }));
+    const hint = meta.activeIslandId ? 'Beat the island boss to travel onward.' : isTower && !due ? 'Entry skips the remaining calendar days.' : due ? 'The realms reopen next year.' : '1–4 SELECT  ·  ENTER TRAVEL  ·  T TOWER';
+    text(center, 566, hint, 10, THEME.GRAY).setOrigin(0.5, 0);
   }
 
   private selectArea(id: AreaId): void {
     const activeIslandId = getMeta().activeIslandId;
     if (activeIslandId && id !== activeIslandId) return;
-    if (id !== 'tower' && id !== 'home') {
+    if (id !== 'tower') {
       const zone = resolveWorldZone(id);
       if (!zone || (isTournamentDue() && activeIslandId !== id) || getRun().results[zone.bossId] === 'win') return;
       updateMeta({ selectedZoneId: id });
@@ -369,7 +321,6 @@ export class ZoneSelectScene extends Phaser.Scene {
   }
 
   private activateSelection(): void {
-    if (this.selectedId === 'home') { this.scene.start('LineupScene'); return; }
     if (this.selectedId === 'tower') { this.enterTower(); return; }
     const zone = resolveWorldZone(this.selectedId);
     if (zone) this.enter(zone.id);
