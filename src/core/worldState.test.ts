@@ -17,9 +17,9 @@ describe('world state event rules', () => {
     const changed = resolveWorldTeam(base, meta);
     expect(changed.name).toBe('The Galarian Flyers');
     expect(changed.players.map(player => player.name)).toEqual([
-      'Zapdos (Galarian)', 'Moltres (Galarian)', 'Articuno (Galarian)', 'Lapras',
+      'Zapdos (Galarian)', 'Moltres (Galarian)', 'Articuno (Galarian)', 'Mantine',
     ]);
-    expect(changed.players.map(player => player.sprite)).toEqual([10170, 10171, 10169, 131]);
+    expect(changed.players.map(player => player.sprite)).toEqual([10170, 10171, 10169, 226]);
   });
 
   it('does not activate the Galarian event before Year 6 or before two Tower floors are cleared', () => {

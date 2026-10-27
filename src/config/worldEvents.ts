@@ -85,10 +85,11 @@ export const WORLD_EVENTS: WorldEventDefinition[] = [
       teamId: 'sky-raiders-coastal',
       name: 'The Galarian Flyers',
       players: [
-        { name: 'Zapdos (Galarian)', sprite: 10170, stats: s(90, 120, 75, 85, 75, 100) },
-        { name: 'Moltres (Galarian)', sprite: 10171, stats: s(90, 85, 115, 80, 100, 90) },
-        { name: 'Articuno (Galarian)', sprite: 10169, stats: s(90, 80, 120, 85, 100, 95) },
-        { name: 'Lapras', sprite: 131, goalie: true, stats: s(100, 65, 75, 80, 90, 55) },
+        // Alternate specialties retain Coastal's 77 OVR boss tier.
+        { name: 'Zapdos (Galarian)', sprite: 10170, stats: s(75, 95, 55, 70, 60, 100) },
+        { name: 'Moltres (Galarian)', sprite: 10171, stats: s(75, 60, 95, 60, 80, 90) },
+        { name: 'Articuno (Galarian)', sprite: 10169, stats: s(70, 55, 100, 65, 75, 95) },
+        { name: 'Mantine', sprite: 226, goalie: true, stats: s(95, 50, 70, 90, 100, 65) },
       ] as Team['players'],
     }],
   },

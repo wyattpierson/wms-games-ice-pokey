@@ -43,7 +43,7 @@ export class BattleTowerScene extends Phaser.Scene {
     const stage = TOWER_STAGES[floor];
     this.add.text(GAME_WIDTH / 2, 120, 'The year-end tournament. One continuous ladder. No opponent selection.', { fontFamily: FONT, fontSize: '14px', color: hex(THEME.DIM) }).setOrigin(.5);
     TOWER_STAGES.forEach((s, i) => {
-      const x = 150 + (i % 6) * 180, y = 195 + Math.floor(i / 6) * 105;
+      const x = GAME_WIDTH / 2 + (i - (TOWER_STAGES.length - 1) / 2) * 180, y = 245;
       const active = i === floor, cleared = i < meta.towerFloor;
       this.add.rectangle(x, y, 150, 72, FILL.plate, 1).setStrokeStyle(2, active ? THEME.GOLD : cleared ? THEME.GREEN : THEME.DIM);
       this.add.text(x, y - 9, cleared ? '✓ CLEARED' : s.name, { fontFamily: FONT, fontSize: '14px', color: hex(cleared ? THEME.GREEN : active ? THEME.GOLD : THEME.DIM) }).setOrigin(.5);

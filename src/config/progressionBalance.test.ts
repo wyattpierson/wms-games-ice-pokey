@@ -3,6 +3,7 @@ import { averageOverall, overall } from '../core/poach';
 import { ISLAND_TEAMS, ALL_TEAMS, USER_TEAM } from './teams';
 import { ITEM_IDS, SHOP_OFFERS, TOWER_STAGES, TIME_COSTS, YEAR_LENGTH_DAYS, ZONES, zoneThreatLevel } from './progression';
 import { TOWER_TEAMS } from './towerTeams';
+import { WORLD_EVENTS } from './worldEvents';
 
 function zoneTeams(zoneId: string) {
   return ISLAND_TEAMS[zoneId];
@@ -21,8 +22,58 @@ describe('realm roster progression', () => {
     }
     for (const { zone, regularValues } of zones) {
       const boss = zoneTeams(zone.id).find(team => team.id === zone.bossId)!;
-      expect(averageOverall(boss.players), `${zone.name} boss should be stronger than its regular teams`).toBeGreaterThan(Math.max(...regularValues));
+      for (const regularOverall of regularValues) {
+        expect(averageOverall(boss.players), `${zone.name} boss should be exactly 5 OVR above every regular team`).toBe(regularOverall + 5);
+      }
     }
+  });
+
+  it('offers one fast Coastal recruit per team with slower supporting players', () => {
+    for (const team of zoneTeams('coastal').filter(team => team.role === 'regular')) {
+      const recruits = team.players.filter(player => !player.goalie && player.stats.speed >= 100);
+      expect(recruits, team.name).toHaveLength(1);
+      expect(recruits[0].stats.attack, team.name).toBeGreaterThanOrEqual(100);
+      expect(averageOverall(team.players)).toBeLessThanOrEqual(72);
+    }
+  });
+
+  it('preserves the boss OVR gap when world events replace a roster', () => {
+    for (const event of WORLD_EVENTS) {
+      for (const override of event.teamOverrides ?? []) {
+        const zone = ZONES.find(zone => zone.bossId === override.teamId);
+        if (!zone || !override.players) continue;
+        for (const team of zoneTeams(zone.id).filter(team => team.role === 'regular')) {
+          expect(averageOverall(override.players), event.id).toBe(averageOverall(team.players) + 5);
+        }
+      }
+    }
+  });
+
+  it('makes the Summit boss skaters appealing speed recruits', () => {
+    const boss = zoneTeams('summit').find(team => team.role === 'boss')!;
+    for (const player of boss.players.filter(player => !player.goalie)) {
+      expect(player.stats.speed, player.name).toBeGreaterThanOrEqual(110);
+    }
+  });
+
+  it('gives boss goalies strong defense without making them elite in every stat', () => {
+    for (const zone of ZONES) {
+      const goalie = zoneTeams(zone.id).find(team => team.role === 'boss')!.players.find(player => player.goalie)!;
+      expect(goalie.stats.defense, goalie.name).toBeGreaterThanOrEqual(90);
+      expect(goalie.stats.specialDefense, goalie.name).toBeGreaterThanOrEqual(100);
+      expect(goalie.stats.attack, goalie.name).toBeLessThanOrEqual(90);
+      expect(goalie.stats.speed, goalie.name).toBeLessThan(100);
+    }
+  });
+
+  it('has five tower floors with one unique, valid team per floor and increasing AI difficulty', () => {
+    expect(TOWER_STAGES).toHaveLength(5);
+    expect(new Set(TOWER_STAGES.map(stage => stage.opponentId)).size).toBe(5);
+    expect(TOWER_STAGES.map(stage => stage.opponentId)).toEqual(TOWER_TEAMS.map(team => team.id));
+    for (let i = 1; i < TOWER_STAGES.length; i++) {
+      expect(TOWER_STAGES[i].difficulty).toBeGreaterThan(TOWER_STAGES[i - 1].difficulty);
+    }
+    expect(TOWER_STAGES[4].difficulty).toBe(1);
   });
 
   it('keeps normalized gameplay stats within their effective ceiling', () => {

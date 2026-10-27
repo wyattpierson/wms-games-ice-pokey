@@ -15,7 +15,7 @@ export interface ZoneDefinition { id: string; name: string; theme: string; descr
 export const ZONES: ZoneDefinition[] = [
   { id: 'coastal', name: 'COASTAL CIRCUIT', theme: 'Wind, salt, and speed', description: 'An approachable opener with fast skaters, scrappy bruisers, and the Legendary Birds waiting at the end.', difficulty: 0.05, opponents: ['knuckle-club-coastal','grave-diggers-coastal','sparkle-squad-coastal'], bossId: 'sky-raiders-coastal', resourceName: 'Tideglass', resourceUnitName: 'Tideglass', resourceDescription: 'Polished fragments charged by the island tides.' },
   { id: 'haunted', name: 'HAUNTED RINKS', theme: 'Cold lights. Colder ghosts.', description: 'Ghosts and dark types trade speed for tricks, special attack, and sturdy defenses.', difficulty: 0.30, opponents: ['knuckle-club-haunted','grave-diggers-haunted','sparkle-squad-haunted'], bossId: 'sky-raiders-haunted', resourceName: 'Echo Shards', resourceUnitName: 'Echo Shard', resourceDescription: 'Crystallized echoes found beneath the haunted rinks.' },
-  { id: 'summit', name: 'SUMMIT LEAGUE', theme: 'Thin air, elite teams', description: 'High-altitude specialists hit harder and defend better; the ancient Titans rule the summit.', difficulty: 0.56, opponents: ['knuckle-club-summit','grave-diggers-summit','sparkle-squad-summit'], bossId: 'sky-raiders-summit', resourceName: 'Summit Crests', resourceUnitName: 'Summit Crest', resourceDescription: 'Rare crests awarded by the high-altitude circuits.' },
+  { id: 'summit', name: 'SUMMIT LEAGUE', theme: 'Thin air, elite teams', description: 'High-altitude specialists hit harder and defend better; the swift Swords of Justice rule the summit.', difficulty: 0.56, opponents: ['knuckle-club-summit','grave-diggers-summit','sparkle-squad-summit'], bossId: 'sky-raiders-summit', resourceName: 'Summit Crests', resourceUnitName: 'Summit Crest', resourceDescription: 'Rare crests awarded by the high-altitude circuits.' },
   { id: 'abyss', name: 'THE ABYSS', theme: 'The end of the line', description: 'Late-game favorites, elite speedsters, and legendary forces push every stat to its limit.', difficulty: 0.76, opponents: ['knuckle-club-abyss','grave-diggers-abyss','sparkle-squad-abyss'], bossId: 'sky-raiders-abyss', resourceName: 'Abyss Cores', resourceUnitName: 'Abyss Core', resourceDescription: 'Dense cores recovered from the deepest waters.' },
 ];
 /**
@@ -31,13 +31,13 @@ export function zoneThreatLevel(zoneDifficulty: number, completedRegularWins: nu
  * The tower is a deliberately sharp difficulty cliff. A tuned, high-stat team
  * and elite AI should normally defeat a strong first-year roster on floor one.
  */
-const towerOpponents = ['tower-warden', 'tower-phalanx', 'tower-aces'];
-const towerDifficulty = [0.97, 0.98, 0.985, 0.99, 0.992, 0.994, 0.996, 0.997, 0.998, 0.999, 1, 1];
-export const TOWER_STAGES = Array.from({ length: 12 }, (_, i) => ({
+const towerOpponents = ['tower-warden', 'tower-phalanx', 'tower-aces', 'tower-celestial', 'tower-origin'];
+const towerDifficulty = [0.97, 0.98, 0.99, 0.995, 1];
+export const TOWER_STAGES = towerOpponents.map((opponentId, i) => ({
   id: `tower-${i+1}`,
   name: `FLOOR ${String(i+1).padStart(2,'0')}`,
   difficulty: towerDifficulty[i],
-  opponentId: towerOpponents[i % towerOpponents.length],
+  opponentId,
 }));
 export interface ShopOffer {
   id: string;

@@ -36,4 +36,22 @@ export const TOWER_TEAMS: Team[] = [
       { name: 'Zamazenta', sprite: 889, goalie: true, stats: s(130,120,85,120,120,120) },
     ],
   },
+  {
+    id: 'tower-celestial', name: 'Celestial Court', color: 0x818cf8, colorDark: 0x312e81, role: 'tower',
+    players: [
+      { name: 'Solgaleo', sprite: 791, stats: s(125,120,105,110,95,110) },
+      { name: 'Lunala', sprite: 792, stats: s(125,95,120,95,115,110) },
+      { name: 'Deoxys', sprite: 386, stats: s(90,120,120,90,95,120) },
+      { name: 'Cresselia', sprite: 488, goalie: true, stats: s(130,75,100,120,120,95) },
+    ],
+  },
+  {
+    id: 'tower-origin', name: 'Origin Guard', color: 0xe2e8f0, colorDark: 0x475569, role: 'tower',
+    players: [
+      { name: 'Dialga', sprite: 483, stats: s(120,120,120,120,110,105) },
+      { name: 'Palkia', sprite: 484, stats: s(110,120,120,110,120,115) },
+      { name: 'Arceus', sprite: 493, stats: s(120,120,120,115,115,120) },
+      { name: 'Giratina', sprite: 487, goalie: true, stats: s(150,100,110,120,120,95) },
+    ],
+  },
 ];
