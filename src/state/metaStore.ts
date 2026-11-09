@@ -1,8 +1,13 @@
+import { freshStoryProgress, settleStoryYear, type StoryProgress } from '../core/storyCampaign';
+import { STORY_RULES } from '../config/storyCampaign';
+import type { TournamentBracket } from '../core/tournament';
 import { YEAR_LENGTH_DAYS } from '../config/progression';
+import { recordAchievementIslandWin, recordAchievementTournamentWin } from './achievementsStore';
 /** Persistent, cross-run progression. Deliberately separate from the disposable run save. */
 const KEY = 'ice-pokey:meta:v1';
 export type StarterId = 'larvitar'|'gible'|'bagon';
 export interface MetaState {
+  story: StoryProgress; bracket: TournamentBracket | null;
   starter: StarterId|null; starterXp: Record<StarterId, number>; currency: number;
   unlocked: string[]; flags: string[]; totalRuns: number; totalMatches: number; starterBonusHp: number;
   towerFloor: number; selectedZoneId: string;
@@ -22,7 +27,7 @@ export interface MetaState {
   /** Best tower record when the current season began, used by year-end reflection. */
   yearStartingBestTowerFloor: number;
 }
-const fresh = (): MetaState => ({ starter: null, starterXp: { larvitar: 0, gible: 0, bagon: 0 }, currency: 0, unlocked: [], flags: [], totalRuns: 0, totalMatches: 0, towerFloor: 0, selectedZoneId: 'coastal', starterBonusHp: 0, daysRemaining: YEAR_LENGTH_DAYS, seasonYear: 1, yearStarted: false, activeIslandId: null, islandResources: { coastal: 0, haunted: 0, summit: 0, abyss: 0 }, everEnteredZones: [], zoneBossWins: { coastal: 0, haunted: 0, summit: 0, abyss: 0 }, bestTowerFloor: 0, previousYearTowerFloor: 0, yearStartingBestTowerFloor: 0 });
+const fresh = (): MetaState => ({ story: freshStoryProgress(), bracket: null, starter: null, starterXp: { larvitar: 0, gible: 0, bagon: 0 }, currency: 0, unlocked: [], flags: [], totalRuns: 0, totalMatches: 0, towerFloor: 0, selectedZoneId: 'coastal', starterBonusHp: 0, daysRemaining: YEAR_LENGTH_DAYS, seasonYear: 1, yearStarted: false, activeIslandId: null, islandResources: { coastal: 0, haunted: 0, summit: 0, abyss: 0 }, everEnteredZones: [], zoneBossWins: { coastal: 0, haunted: 0, summit: 0, abyss: 0 }, bestTowerFloor: 0, previousYearTowerFloor: 0, yearStartingBestTowerFloor: 0 });
 function load(): MetaState {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || 'null');
@@ -44,6 +49,8 @@ function load(): MetaState {
       const zoneBossWins = Object.fromEntries(zoneIds.map(id => [id, Math.max(Number(savedBossWins[id] || 0), inferredBossWins[id] || 0)]));
       return {
         ...defaults, ...v,
+        story: { ...freshStoryProgress(), ...(v.story || {}), towerVisited: v.story?.towerVisited ?? Number(v.bestTowerFloor || v.towerFloor || 0) > 0 },
+        bracket: v.bracket?.rounds?.length === 4 ? v.bracket : null,
         flags: [...flags],
         islandResources: { ...defaults.islandResources, ...(v.islandResources || {}) },
         everEnteredZones: [...inferredEntered],
@@ -58,10 +65,10 @@ function load(): MetaState {
 }
 let meta = load();
 function save() { try { localStorage.setItem(KEY, JSON.stringify(meta)); } catch {} }
-export const getMeta = (): MetaState => ({ ...meta, starterXp: { ...meta.starterXp }, unlocked: [...meta.unlocked], flags: [...meta.flags], islandResources: { ...meta.islandResources }, everEnteredZones: [...meta.everEnteredZones], zoneBossWins: { ...meta.zoneBossWins } });
+export const getMeta = (): MetaState => ({ ...meta, story: { ...meta.story }, bracket: meta.bracket ? { ...meta.bracket, rounds: meta.bracket.rounds.map(r => [...r]) } : null, starterXp: { ...meta.starterXp }, unlocked: [...meta.unlocked], flags: [...meta.flags], islandResources: { ...meta.islandResources }, everEnteredZones: [...meta.everEnteredZones], zoneBossWins: { ...meta.zoneBossWins } });
 export function updateMeta(patch: Partial<MetaState>): MetaState { meta = { ...meta, ...patch }; save(); return getMeta(); }
 export function chooseStarter(starter: StarterId): MetaState { if (meta.starter) return getMeta(); meta = { ...meta, starter, totalRuns: meta.totalRuns + 1 }; save(); return getMeta(); }
-export function awardMatch(won: boolean, boss = false, starterOnBench = false): void { meta.totalMatches++; if (meta.starter) { meta.starterXp[meta.starter] += boss ? 20 : 10; meta.starterBonusHp += boss ? (starterOnBench ? 2 : 4) : (starterOnBench ? 1 : 2); } if (won) meta.currency += boss ? 10 : 3; save(); }
+export function awardMatch(won: boolean, boss = false, starterOnBench = false): void { meta.totalMatches++; if (meta.starter) { const previousXp = meta.starterXp[meta.starter]; meta.starterXp[meta.starter] += boss ? STORY_RULES.bossXp : STORY_RULES.matchXp; if (meta.seasonYear === 1) meta.starterXp[meta.starter] = Math.max(previousXp, Math.min(meta.starterXp[meta.starter], STORY_RULES.firstYearXpCap)); meta.starterBonusHp += boss ? (starterOnBench ? 2 : 4) : (starterOnBench ? 1 : 2); } if (won) meta.currency += boss ? 10 : 3; save(); }
 export function awardOpponentResource(): void { meta.currency += 3; save(); }
 export function buyUnlock(id: string, cost: number): boolean { if (meta.unlocked.includes(id)) return false; if (meta.currency < cost) return false; meta.currency -= cost; meta.unlocked.push(id); save(); return true; }
 export function setStoryFlag(flag: string): void { if (!meta.flags.includes(flag)) { meta.flags.push(flag); save(); } }
@@ -69,9 +76,10 @@ export function addRun(): void { meta.totalRuns++; save(); }
 
 /** Begin a new roguelike run/year. The tournament countdown is run-scoped, while its current value is saved persistently. */
 export function beginNewYear(): void {
+  if (meta.yearStarted) meta.story = settleStoryYear(meta.story, meta.seasonYear, meta.towerFloor >= 4);
   const previousYearTowerFloor = meta.yearStarted ? meta.towerFloor : 0;
   const yearStartingBestTowerFloor = Math.max(meta.bestTowerFloor || 0, meta.towerFloor || 0);
-  meta = { ...meta, seasonYear: meta.yearStarted ? meta.seasonYear + 1 : Math.max(1, meta.seasonYear), yearStarted: true, daysRemaining: YEAR_LENGTH_DAYS, towerFloor: 0, activeIslandId: null, previousYearTowerFloor, yearStartingBestTowerFloor };
+  meta = { ...meta, seasonYear: meta.yearStarted ? meta.seasonYear + 1 : Math.max(1, meta.seasonYear), yearStarted: true, daysRemaining: YEAR_LENGTH_DAYS, towerFloor: 0, bracket: null, activeIslandId: null, previousYearTowerFloor, yearStartingBestTowerFloor };
   save();
 }
 
@@ -87,6 +95,7 @@ export function markZoneEntered(zoneId: string): boolean {
 export function recordZoneBossWin(zoneId: string): number {
   if (!zoneId) return 0;
   meta.zoneBossWins = { ...meta.zoneBossWins, [zoneId]: (meta.zoneBossWins[zoneId] || 0) + 1 };
+  recordAchievementIslandWin(zoneId);
   save();
   return meta.zoneBossWins[zoneId];
 }
@@ -134,4 +143,9 @@ export function isTournamentDue(): boolean { return meta.daysRemaining <= 0; }
 export function resetMetaState(): void {
   meta = fresh();
   save();
+}
+
+export function settleSeason(won: boolean): void {
+  updateMeta({ story: settleStoryYear(meta.story, meta.seasonYear, won) });
+  if (won) recordAchievementTournamentWin();
 }

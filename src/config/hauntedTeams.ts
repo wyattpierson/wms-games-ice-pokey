@@ -1,43 +1,43 @@
 import type { Team } from './teams';
 
-/** Haunted Rinks — roughly even with a well-recruited Coastal lineup. */
+/** Haunted Rinks — the third region: rare Ghost/Dark recruits and deceptive defenders. */
 const s = (hp:number, attack:number, specialAttack:number, defense:number, specialDefense:number, speed:number) => ({hp,attack,specialAttack,defense,specialDefense,speed});
 export const TEAMS_HAUNTED: Team[] = [
   {
-    id: 'knuckle-club-haunted', name: 'The Graveyard Shift', color: 0x8b5cf6, colorDark: 0x5b21b6, role: 'regular',
+    id: 'knuckle-club-haunted', name: 'Phantom Force', color: 0x8b5cf6, colorDark: 0x5b21b6, role: 'regular',
     players: [
-      { name: 'Mimikyu', sprite: 778, stats: s(63,98,58,92,112,96) },
-      { name: 'Houndstone', sprite: 972, stats: s(83,103,57,107,92,75) },
-      { name: 'Annihilape', sprite: 979, stats: s(93,118,72,87,92,90) },
-      { name: 'Cofagrigus', sprite: 563, goalie: true, stats: s(60,45,80,120,110,25) },
+      { name: 'Mimikyu', sprite: 778, stats: s(55, 90, 50, 80, 105, 96) },
+      { name: 'Marshadow', sprite: 802, stats: s(90, 125, 90, 80, 90, 125) },
+      { name: 'Annihilape', sprite: 979, stats: s(110, 115, 50, 80, 90, 90) },
+      { name: 'Cofagrigus', sprite: 563, goalie: true, stats: s(58, 50, 95, 145, 105, 30) },
     ],
   },
   {
-    id: 'grave-diggers-haunted', name: 'Midnight Masquerade', color: 0x6366f1, colorDark: 0x3730a3, role: 'regular',
+    id: 'grave-diggers-haunted', name: 'Dark Pulse', color: 0x6366f1, colorDark: 0x3730a3, role: 'regular',
     players: [
-      { name: 'Zoroark', sprite: 571, stats: s(67,107,116,71,71,105) },
-      { name: 'Froslass', sprite: 478, stats: s(77,81,91,76,81,105) },
-      { name: 'Banette', sprite: 354, stats: s(72,106,86,76,76,65) },
+      { name: 'Zoroark', sprite: 571, stats: s(60, 105, 120, 60, 60, 105) },
+      { name: 'Weavile', sprite: 461, stats: s(70, 120, 45, 65, 85, 125) },
+      { name: 'Darkrai', sprite: 491, stats: s(70, 90, 135, 90, 90, 125) },
       // Dusknoir is a slow, excellent CPU defender; its OVR alone doesn't tell the story.
-      { name: 'Dusknoir', sprite: 477, goalie: true, stats: s(55,90,65,120,120,45) },
+      { name: 'Dusknoir', sprite: 477, goalie: true, stats: s(45, 100, 65, 135, 135, 45) },
     ],
   },
   {
-    id: 'sparkle-squad-haunted', name: 'Dark Arts Academy', color: 0xa855f7, colorDark: 0x6b21a8, role: 'regular',
+    id: 'sparkle-squad-haunted', name: 'Trick Room', color: 0xa855f7, colorDark: 0x6b21a8, role: 'regular',
     players: [
-      { name: 'Chandelure', sprite: 609, stats: s(65,60,120,89,99,80) },
-      { name: 'Grimmsnarl', sprite: 861, stats: s(100,120,90,79,84,70) },
-      { name: 'Spiritomb', sprite: 442, stats: s(65,95,94,114,114,45) },
-      { name: 'Sableye', sprite: 302, goalie: true, stats: s(60,75,65,95,85,55) },
+      { name: 'Chandelure', sprite: 609, stats: s(60, 55, 145, 90, 90, 80) },
+      { name: 'Grimmsnarl', sprite: 861, stats: s(95, 120, 95, 65, 75, 60) },
+      { name: 'Hoopa', sprite: 720, stats: s(80, 110, 150, 60, 130, 70) },
+      { name: 'Spiritomb', sprite: 442, goalie: true, stats: s(50, 92, 92, 108, 108, 35) },
     ],
   },
   {
-    id: 'sky-raiders-haunted', name: 'The Roaming Legends', color: 0x64748b, colorDark: 0x334155, role: 'boss',
+    id: 'sky-raiders-haunted', name: 'The Legendary Beasts', color: 0x64748b, colorDark: 0x334155, role: 'boss',
     players: [
-      { name: 'Raikou', sprite: 243, stats: s(87,82,98,73,88,110) },
-      { name: 'Entei', sprite: 244, stats: s(107,107,83,83,73,95) },
-      { name: 'Suicune', sprite: 245, stats: s(97,73,83,108,108,80) },
-      { name: 'Umbreon', sprite: 197, goalie: true, stats: s(105,65,60,115,120,65) },
+      { name: 'Raikou', sprite: 243, stats: s(90, 85, 115, 75, 100, 115) },
+      { name: 'Entei', sprite: 244, stats: s(115, 115, 90, 85, 75, 100) },
+      { name: 'Suicune', sprite: 245, stats: s(100, 75, 90, 115, 115, 85) },
+      { name: 'Umbreon', sprite: 197, goalie: true, stats: s(95, 65, 60, 110, 130, 65) },
     ],
   },
 ];

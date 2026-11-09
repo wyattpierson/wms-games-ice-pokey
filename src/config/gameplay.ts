@@ -24,24 +24,35 @@ export const PICKUP_RADIUS = 30; // distance from player center to take the loos
 export const PICKUP_DELAY = 0.3; // s before the last taker may take the puck again
 
 // Skating
-export const BASE_SPEED = 150; // px/s at the bottom of the stat range
-export const SPEED_RANGE = 140; // + this × normalised Speed (so 150..290 px/s)
+export const BASE_SPEED = 162; // px/s at the bottom of the stat range
+export const SPEED_RANGE = 150; // + this × normalised Speed (so 162..312 px/s)
 export const AI_SPEED_FACTOR = 0.9; // the user's AI TEAMMATES skate at this × stat speed (opponents: see difficulty.ts)
+export const SKATE_RESPONSE = 12; // exponential acceleration response per second
+export const SKATE_TURN_RESPONSE = 20; // controlled skater sheds sideways momentum faster
+export const SKATE_COAST_DRAG = 7; // preserve the short glide when releasing movement
 
 // Passing / shooting
-export const PASS_SPEED = 470;
-export const CHARGE_TIME = 0.65; // s from tap to full charge
+export const PASS_SPEED = 530;
+export const PASS_FRICTION = 0.12;
+export const PASS_PLUS_MULT = 1.25;
+export const BANK_PASS_SPEED_MULT = 1.2;
+export const BANK_PASS_RETAIN = 0.94;
+export const CHECK_PLUS_PRESSURE_MULT = 1.25;
+export const CHECK_PLUS_STAGGER_MULT = 1.15;
+export const CHECK_MISS_RECOVERY = 0.22;
+export const GIVE_GO_TIME = 1.1;
+export const CHARGE_TIME = 0.5; // s from tap to full charge
 export const SHOT_SPEED_MIN = 430;
 export const FAST_PUCK_SPEED = 350; // above this, a grab is a skill contest, not automatic
 export const SHOT_SPEED_MAX = 660;
 export const SHOT_RANGE = 290; // AI shoots when closer than this to the goal
 
 // Goalie
-export const GOALIE_SAVE_RADIUS = 34;
-export const GOALIE_SAVE_COOLDOWN = 0.6;
+export const GOALIE_SAVE_RADIUS = 37;
+export const GOALIE_SAVE_COOLDOWN = 0.3;
 // Goalie AI: play the angle (stand between puck and goal centre), read the shot, then dive.
 export const GOALIE_DEPTH = 90; // px "arc depth": shading = depth / puck distance from the goal line
-export const GOALIE_DIVE_FACTOR = 1.35; // skating-speed multiplier while diving at a shot
+export const GOALIE_DIVE_FACTOR = 1.5; // skating-speed multiplier while diving at a shot
 export const GOALIE_SHOT_SPEED = 260; // puck speed at which it counts as a shot to react to
 export const GOALIE_SAVE_DEFLECT_SPEED = 230;
 
@@ -84,7 +95,7 @@ export const ONE_TIMER_LEAD = 0.45; // s before arrival the window opens
 export const ONE_TIMER_GRACE = 0.18; // s after receiving that a press still counts
 export const ONE_TIMER_MULT = 1.35; // shot speed multiplier (a perfect shot is 1.18) — instant AND hard
 export const ONE_TIMER_RING_TIME = 0.9; // s of ring travel shown to the receiver
-export const ONE_TIMER_REACT_MULT = 2.8; // the goalie reacts this much slower to one
+export const ONE_TIMER_REACT_MULT = 2.2; // the goalie reacts this much slower to one
 export const OVERCHARGE_GRACE = 0.15;
 export const OVERCHARGE_DECAY = 2.0;
 
@@ -92,7 +103,7 @@ export const OVERCHARGE_DECAY = 2.0;
 // reticle along the goal mouth (-1 = top post … +1 = bottom post, always on net).
 export const AIM_SLIDE_SPEED = 1.9; // reticle units per second while holding Up/Down
 export const AIM_POST_MARGIN = 16; // px kept inside the posts at aim = ±1 (puck radius + slack)
-export const CHARGE_SKATE = 0.6; // speed factor for left/right skating while charging (Up/Down aim instead)
+export const CHARGE_SKATE = 0.75; // speed factor for left/right skating while charging (Up/Down aim instead)
 
 // Check (defense, Enter/Shift) = a BLOCK. It never steals. The defender plants
 // and becomes a wall: opponents can't push through, and a juke that resolves
@@ -126,7 +137,7 @@ export const STUFF_STAGGER_PER_DEF = 0.3; // …+ this × normalised Defense
 
 // ---------------------------------------------------------------------------
 // Carrying the puck is a little slower than skating without it.
-export const CARRY_SPEED_FACTOR = 0.9;
+export const CARRY_SPEED_FACTOR = 0.94;
 
 // Possession PRESSURE. A carrier who just skates with a defender on top of them
 // slowly loses the puck: the meter fills while an opposing skater is within
@@ -146,21 +157,20 @@ export const PRESSURE_STRIP_SPEED = 170; // px/s the puck pops toward the presse
 // enemy goalie makes it roll a response once (core/goalie.ts):
 //   READ  – it sees it coming. No bonus for you; if you land it within GOALIE_POKE_RANGE it SMOTHERS the puck.
 //   BITE  – it commits to the fake side (GOALIE_BITE_OFFSET px off-centre, ignoring where the puck is). If the move lands, the goalie is
-//           FOOLED for GOALIE_FOOL_TIME: slow, late to read a shot, and your next shot is a
-//           snap shot (consumes the window). Open net on the side you cut to.
+//           FOOLED for GOALIE_FOOL_TIME: displaced and briefly slower to recover. The opening is positional;
+//           shots still use their actual charge and normal reaction delay.
 //   HOLD  – it just keeps tracking (with a little positioning lag).
 // Every fool makes that goalie respect you more for a few seconds (more READs, esp. the same move).
 export const GOALIE_FOOL_RANGE = 270;
 export const GOALIE_POKE_RANGE = 70;
-export const GOALIE_BITE_OFFSET = 40; // px from the CENTRE of the net the goalie commits to on the fake side (leaves the far corner open: net half-width is 60, save radius 34)
-export const GOALIE_FOOL_TIME = 0.7;
-export const GOALIE_FOOL_SPEED = 0.3; // goalie skating factor while fooled
-export const GOALIE_FOOL_MIN_CHARGE = 0.8; // a tap during the window still leaves with this much charge (snap shot)
-export const GOALIE_RESPECT_GAIN = 0.18;
+export const GOALIE_BITE_OFFSET = 30; // px from centre on the fake side; it recovers toward the puck after the cut
+export const GOALIE_FOOL_TIME = 0.5;
+export const GOALIE_FOOL_SPEED = 0.65; // goalie skating factor while fooled
+export const GOALIE_RESPECT_GAIN = 0.22;
 export const GOALIE_RESPECT_MAX = 0.5;
 export const GOALIE_RESPECT_DECAY = 0.07; // per second (≈ 6–7 s to forget a full fool)
 export const GOALIE_REPEAT_READ = 0.15; // extra read chance for the SAME move that fooled it last
 // The user's own goalie plays at a fixed, middling level (difficulty is about the OPPONENT's skill).
 export const FRIENDLY_GOALIE_READ = 0.38;
 export const FRIENDLY_GOALIE_BITE = 0.5;
-export const FRIENDLY_GOALIE_LAG = 0.12;
+export const FRIENDLY_GOALIE_LAG = 0.09;

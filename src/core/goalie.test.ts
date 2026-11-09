@@ -81,3 +81,19 @@ describe('goalie outlet selection', () => {
     expect(chooseGoalieOutlet([covered])).toBeNull();
   });
 });
+
+// Swept saves must not miss fast pucks or reroll with the display refresh rate.
+import { segmentCircleContact, saveEncounterChance } from './goalie';
+describe('swept save encounters', () => {
+  it('finds a crossing even when both frame endpoints are outside', () => {
+    expect(segmentCircleContact({ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 0 }, 10)).toBeCloseTo(0.4);
+    expect(segmentCircleContact({ x: 100, y: 0 }, { x: 0, y: 0 }, { x: 50, y: 0 }, 10)).toBeCloseTo(0.4);
+    expect(segmentCircleContact({ x: 0, y: 11 }, { x: 100, y: 11 }, { x: 50, y: 0 }, 10)).toBeNull();
+    expect(segmentCircleContact({ x: 50, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 0 }, 10)).toBe(0);
+  });
+  it('uses identical odds for the same trajectory at different frame lengths', () => {
+    const chance = (distance: number) => saveEncounterChance(0.6, 700, { x: 0, y: 20 }, { x: distance, y: 20 }, { x: 50, y: 0 }, 34);
+    expect(chance(700 / 30)).toBeCloseTo(chance(700 / 144), 12);
+    expect(chance(700 / 60)).toBeCloseTo(chance(700 / 144), 12);
+  });
+});

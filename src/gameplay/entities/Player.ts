@@ -1,8 +1,9 @@
 import type Phaser from 'phaser';
 import { ACTION_KEYS } from '../../config/bindings';
 import {
-  CARRY_SPEED_FACTOR, CHECK_SLOW, GOALIE_RADIUS, GOALIE_RESPECT_DECAY, HP_REGEN_RATE, MOVE_COOLDOWN,
+  CARRY_SPEED_FACTOR, CHECK_SLOW, CHECK_MISS_RECOVERY, GOALIE_RADIUS, GOALIE_RESPECT_DECAY, HP_REGEN_RATE, MOVE_COOLDOWN,
   PARRY_CONE_HALF, PARRY_RANGE, PERFECT_SHOT_CHARGE, PLAYER_RADIUS, TUMBLE_TIME, WHIFF_TIME,
+  SKATE_RESPONSE, SKATE_TURN_RESPONSE, SKATE_COAST_DRAG,
 } from '../../config/gameplay';
 import type { AIPlan } from '../../core/aiPlan';
 import { ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
@@ -106,6 +107,16 @@ export class Player {
   charging = false;
   charge = 0;
   stickSwing = 0;
+  shotInterrupted = false; // controlled player must release Shoot after a checked wind-up
+  aiShotAim: number | null = null;
+  aiShotCharge = 0;
+  releaseAnim = 0;
+  releaseKind: 'pass' | 'shot' = 'shot';
+  releaseAngle = 0;
+  receiveAnim = 0;
+  giveGoT = 0;
+  giveGoTarget: Vec2 | null = null;
+  checkRecovery = 0;
 
   // Skill-move (juke) state
   move: MoveId | null = null;
@@ -132,7 +143,7 @@ export class Player {
   goaliePlan: { owner: Player | null; seq: number; stance: GoalieStance } = { owner: null, seq: -1, stance: 'hold' };
   respect = 0; // how much this goalie respects the carrier right now (decays)
   lastFooled: MoveId | null = null;
-  fooledT = 0; // >0: fooled by a landed move — slow, late, and the next shot is a snap shot
+  fooledT = 0; // >0: displaced by a landed fake, briefly slower while recovering
   foolSpent = false; // the fooled window has been used by a shot
   openSign: -1 | 0 | 1 = 0; // screen-y side the fooling move cut toward (the OPEN side)
   speedScale = 1; // AI speed multiplier (difficulty / teammate factor); ignored for the controlled player
@@ -144,6 +155,7 @@ export class Player {
   pickupCooldown = 0;
   whiffCooldown = 0; // flailed at a fast puck; can't re-grab it for a moment
   saveCooldown = 0;
+  saveAttemptSeq = -1;
   goalieSeq = -1; // (goalie AI) which launch it is currently reacting to
   goalieReactAt: number | null = null; // (goalie AI) game-time at which it commits to a shot it has seen
   checkCd = 0;
@@ -252,7 +264,7 @@ export class Player {
 
   /** Can this player start a skill move right now? */
   canStartMove(): boolean {
-    return !this.move && this.moveCd <= 0 && this.stagger <= 0 && !this.down;
+    return !this.move && this.moveCd <= 0 && this.checkRecovery <= 0 && this.stagger <= 0 && !this.down;
   }
 
   /**
@@ -270,6 +282,7 @@ export class Player {
       this.moveSide = sideAwayFrom(this.facing, this.pos, threat);
       this.moveBase = this.facing;
     }
+    this.aiShotAim = null;
     this.move = id;
     this.moveT = 0;
     this.moveResolved = false;
@@ -308,11 +321,35 @@ export class Player {
     return !!(this.dashDir && this.move && this.moveResolved && this.moveT >= this.tellDur);
   }
 
+  /** Start at blade contact, then follow through without delaying the action. */
+  animateRelease(kind: 'pass' | 'shot'): void {
+    this.releaseAngle = kind === 'shot' ? this.facing : this.stickAngle();
+    this.releaseKind = kind;
+    this.releaseAnim = kind === 'pass' ? 0.18 : SWING_TIME;
+    this.receiveAnim = 0;
+  }
+
   /** Angle the stick is drawn at (charge cock-back, swings, tell flick). */
   private stickAngle(): number {
     let a = this.facing;
-    if (this.charging) a -= this.charge * 0.9;
+    if (this.releaseAnim > 0 && !this.carrying) {
+      const duration = this.releaseKind === 'pass' ? 0.18 : SWING_TIME;
+      const progress = 1 - this.releaseAnim / duration;
+      let settle = this.facing - this.releaseAngle;
+      while (settle > Math.PI) settle -= Math.PI * 2;
+      while (settle < -Math.PI) settle += Math.PI * 2;
+      return this.releaseAngle + settle * progress + Math.sin(progress * Math.PI) * (this.releaseKind === 'pass' ? 0.45 : 1.05);
+    }
+    if (this.carrying && !this.charging && !this.move) {
+      a += Math.sin(this.t * 9) * 0.1 * Math.min(1, len(this.vel) / 150);
+      a -= Math.sin((1 - this.receiveAnim / 0.16) * Math.PI) * 0.2 * (this.receiveAnim > 0 ? 1 : 0);
+    }
+    if (this.charging) a -= 1.65 * Math.sin(Math.min(1, this.charge) * Math.PI / 2);
     else if (this.stickSwing > 0) a -= 1.2 * (this.stickSwing / SWING_TIME);
+    if (this.move === 'deke' && this.moveResolved && this.moveT >= this.tellDur) {
+      const pull = Math.min(1, (this.moveT - this.tellDur) / (this.effectDur * 0.2));
+      a = this.moveBase + this.moveSide * (-0.65 + 1.5 * pull * pull * (3 - 2 * pull));
+    }
     if (this.move && this.moveT < this.tellDur) {
       // The juke animation: the stick (and the puck on its blade) works the
       // puck back and forth while the tell plays out.
@@ -320,8 +357,8 @@ export class Player {
       if (this.move === 'spin') {
         a += Math.pow(t, 1.4) * Math.PI * 2; // winds up in a full, accelerating circle (the puck orbits you)
       } else {
-        // quick side-to-side feint, biased toward the FAKE side (the cut goes the other way)
-        a += Math.sin(this.moveT * 38) * 0.5 * t - this.moveSide * 0.6 * t;
+        // Sell one outside fake before the body cuts back inside.
+        a = this.moveBase - this.moveSide * Math.sin(t * Math.PI / 2) * 0.65;
       }
     }
     return a;
@@ -329,7 +366,8 @@ export class Player {
 
   /** Where the puck sits when this player carries it. */
   bladeTip(): Vec2 {
-    const a = this.stickAngle();
+    // The stick lifts away from the puck during a slapshot wind-up.
+    const a = this.charging ? this.facing : this.stickAngle();
     const dx = Math.cos(a);
     const dy = Math.sin(a);
     const px = -dy;
@@ -343,20 +381,23 @@ export class Player {
   /** Steer toward a target velocity (glide = hockey feel). */
   applyInput(dir: Vec2, dt: number, speedFactor = 1): void {
     if (this.stagger > 0 || this.down) return; // staggered: can't steer
-    const planted = this.guardT > 0 ? CHECK_SLOW : 1;
+    const planted = this.guardT > 0 ? CHECK_SLOW : this.checkRecovery > 0 ? 0.4 : 1;
     const aiScale = this.controlled ? 1 : this.speedScale;
     const carry = this.carrying && !this.isGoalie ? CARRY_SPEED_FACTOR : 1; // the puck slows you a little
-    const speed = this.def.stats.moveSpeed * (this.isGoalie ? 0.8 : 1) * speedFactor * planted * aiScale * carry * this.powerSpeedScale;
+    const speed = this.def.stats.moveSpeed * speedFactor * planted * aiScale * carry * this.powerSpeedScale;
     const tx = dir.x * speed;
     const ty = dir.y * speed;
-    const t = Math.min(1, dt * 11);
+    // Braking into a turn should feel deliberate, without raising top speed.
+    // Exponential response gives the same acceleration at different frame rates.
+    const turning = this.controlled && (this.vel.x * dir.x + this.vel.y * dir.y) < len(this.vel) * 0.7;
+    const t = 1 - Math.exp(-dt * (turning ? SKATE_TURN_RESPONSE : SKATE_RESPONSE));
     this.vel.x += (tx - this.vel.x) * t;
     this.vel.y += (ty - this.vel.y) * t;
   }
 
   /** No input: decelerate on the ice. */
   coast(dt: number): void {
-    const mul = Math.exp(-7 * dt);
+    const mul = Math.exp(-SKATE_COAST_DRAG * dt);
     this.vel.x *= mul;
     this.vel.y *= mul;
     if (len(this.vel) < 3) this.vel = v();
@@ -364,6 +405,11 @@ export class Player {
 
   update(dt: number, puckPos: Vec2): void {
     this.t += dt;
+    this.releaseAnim = Math.max(0, this.releaseAnim - dt);
+    this.receiveAnim = Math.max(0, this.receiveAnim - dt);
+    this.giveGoT = Math.max(0, this.giveGoT - dt);
+    this.checkRecovery = Math.max(0, this.checkRecovery - dt);
+    if (this.guardT > 0 && this.guardT <= dt && this.checkHit.size === 0) this.checkRecovery = CHECK_MISS_RECOVERY;
     if (this.stickSwing > 0) this.stickSwing = Math.max(0, this.stickSwing - dt);
     this.pickupCooldown = Math.max(0, this.pickupCooldown - dt);
     this.whiffCooldown = Math.max(0, this.whiffCooldown - dt);
@@ -405,7 +451,7 @@ export class Player {
     if (this.dashing && this.move) {
       const ph = (this.moveT - this.tellDur) / this.effectDur;
       const sp = dashSpeedAt(this.dashSpeed, ph);
-      // Spin's heading sweeps round a curve; Deke's is a constant cut angle (core/moves.ts).
+      // Spin curves; Deke fakes outside before cutting inside (core/moves.ts).
       const h = dashHeading(MOVE_DEFS[this.move], this.dashAim, this.moveSide, ph);
       this.dashDir = v(Math.cos(h), Math.sin(h));
       this.vel = v(this.dashDir.x * sp, this.dashDir.y * sp);
@@ -423,6 +469,10 @@ export class Player {
     this.pos = v(this.pos.x + this.vel.x * dt, this.pos.y + this.vel.y * dt);
 
     const r = this.radius();
+    // Shed only momentum into the boards, keeping the slide along them. This
+    // also prevents a hidden outward velocity delaying a turn off the wall.
+    if (this.pos.x <= ICE_X + r && this.vel.x < 0 || this.pos.x >= ICE_X + RINK_W - r && this.vel.x > 0) this.vel.x = 0;
+    if (this.pos.y <= ICE_Y + r && this.vel.y < 0 || this.pos.y >= ICE_Y + RINK_H - r && this.vel.y > 0) this.vel.y = 0;
     this.pos.x = clamp(this.pos.x, ICE_X + r, ICE_X + RINK_W - r);
     this.pos.y = clamp(this.pos.y, ICE_Y + r, ICE_Y + RINK_H - r);
 
@@ -468,7 +518,11 @@ export class Player {
 
   setControlled(c: boolean): void {
     this.controlled = c;
+    if (!c) this.shotInterrupted = false;
   }
+
+  /** Training hides inactive partners while keeping the normal player simulation. */
+  setVisible(visible: boolean): void { this.container.setVisible(visible); }
 
   /** One ring of a cue, in the cue's shape. `moving` = the shrinking ring (Spin's is rotating arcs). */
   private strokeCueRing(g: Phaser.GameObjects.Graphics, shape: CueShape, rad: number, moving: boolean): void {
@@ -618,6 +672,11 @@ export class Player {
       g.strokeCircle(0, 2, this.stuffRange());
     }
 
+    if (this.checkRecovery > 0) {
+      g.lineStyle(2, 0x9ad1ff, this.checkRecovery / CHECK_MISS_RECOVERY * 0.45);
+      g.strokeCircle(0, 2, this.guardRadius() * 0.75);
+    }
+
     // Stick: shaft from the hand (body edge), then a short blade out to the
     // side. Container-local coords — must mirror bladeTip() (world-space).
     // During a tell the stick takes the move's color: dim flicker before the
@@ -709,7 +768,13 @@ export class Player {
     const ey = dy * (r + 8) + py * r * 0.3;
     const tx = ex + px * BLADE_LEN;
     const ty = ey + py * BLADE_LEN;
-    g.lineStyle(3, stickColor, stickAlpha);
+    if (this.charging && this.charge > 0.25) {
+      g.lineStyle(2, 0xe5f3ff, 0.25);
+      g.beginPath();
+      g.arc(0, 0, r + 12, a, this.facing, false);
+      g.strokePath();
+    }
+    g.lineStyle(this.charging ? 4 : 3, stickColor, stickAlpha);
     g.lineBetween(hx, hy, ex, ey);
     g.lineStyle(4, bladeColor, stickAlpha);
     g.lineBetween(ex, ey, tx, ty);

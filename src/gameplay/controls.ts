@@ -16,6 +16,7 @@ export class Controls {
       right: MOVE_KEYS.right.map((c) => kb.addKey(c)),
     };
     this.actions = {
+      bankPass: ACTION_KEYS.bankPass.map((c) => kb.addKey(c)),
       pass: ACTION_KEYS.pass.map((c) => kb.addKey(c)),
       shoot: ACTION_KEYS.shoot.map((c) => kb.addKey(c)),
       spin: ACTION_KEYS.spin.map((c) => kb.addKey(c)),
@@ -40,6 +41,13 @@ export class Controls {
 
   held(a: Action): boolean {
     return this.actions[a].some((k) => k.isDown);
+  }
+
+  clearEdges(): void {
+    for (const keys of Object.values(this.actions)) for (const key of keys) {
+      Phaser.Input.Keyboard.JustDown(key);
+      Phaser.Input.Keyboard.JustUp(key);
+    }
   }
 
   justReleased(a: Action): boolean {

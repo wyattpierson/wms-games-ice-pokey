@@ -1,8 +1,8 @@
 import type { BaseStats } from '../core/stats';
 
 /**
- * Team / roster data. Rosters are themed squads; stats are hand-tuned on a
- * familiar Pokémon stat scale for hockey balance, not exact Pokédex stat dumps.
+ * Team / roster data. All species and forms use their real Pokémon base stats.
+ * Balance through roster selection and AI; never alter base stats to force OVR.
  *
  * Roster = 4 Pokémon: 3 field + 1 goalie (the `goalie: true` entry).
  * The user's team always defends left / attacks right.
@@ -45,7 +45,7 @@ const s = (
  */
 export const USER_TEAM: Team = {
   id: 'hydro-voltz',
-  name: 'Hydro Voltz',
+  name: 'Team Volt Tackle',
   color: 0x3b82f6,
   colorDark: 0x1d4ed8,
   players: [
@@ -59,11 +59,11 @@ export const USER_TEAM: Team = {
 export const OPPONENTS: Team[] = [
   {
     id: 'knuckle-club',
-    name: 'Knuckle Club',
+    name: 'Saffron Dojo',
     color: 0xef4444,
     colorDark: 0xb91c1c,
     players: [
-      { name: 'Hitmontop', sprite: 237, stats: s(60, 100, 60, 95, 110, 70) },
+      { name: 'Hitmontop', sprite: 237, stats: s(50, 95, 35, 95, 110, 70) },
       { name: 'Hitmonchan', sprite: 107, stats: s(50, 105, 35, 79, 110, 76) },
       { name: 'Grapploct', sprite: 853, stats: s(80, 118, 70, 90, 80, 42) },
       { name: 'Hariyama', sprite: 297, goalie: true, stats: s(144, 120, 40, 60, 60, 50) },
@@ -71,7 +71,7 @@ export const OPPONENTS: Team[] = [
   },
   {
     id: 'grave-diggers',
-    name: 'Grave Diggers',
+    name: 'Lavender Spirits',
     color: 0x22c55e,
     colorDark: 0x166534,
     players: [
@@ -83,13 +83,13 @@ export const OPPONENTS: Team[] = [
   },
   {
     id: 'sparkle-squad',
-    name: 'Sparkle Squad',
+    name: 'Dazzling Gleam',
     color: 0xec4899,
     colorDark: 0xbe185d,
     players: [
       { name: 'Togekiss', sprite: 468, stats: s(85, 50, 120, 95, 115, 80) },
       { name: 'Gardevoir', sprite: 282, stats: s(68, 65, 125, 65, 115, 80) },
-      { name: 'Electivire', sprite: 466, stats: s(80, 115, 100, 75, 80, 110) },
+      { name: 'Electivire', sprite: 466, stats: s(75, 123, 95, 67, 85, 95) },
       { name: 'Comfey', sprite: 764, goalie: true, stats: s(51, 52, 82, 90, 110, 100) },
     ],
   },
@@ -102,14 +102,14 @@ export const OPPONENTS: Team[] = [
  */
 export const CHAMPION_TEAM: Team = {
   id: 'sky-raiders',
-  name: 'Sky Raiders',
+  name: 'Sky Pillar',
   color: 0xf59e0b,
   colorDark: 0xb45309,
   players: [
-    { name: 'Zekrom', sprite: 644, stats: s(100, 120, 120, 120, 100, 90) },
+    { name: 'Zekrom', sprite: 644, stats: s(100, 150, 120, 120, 100, 90) },
     { name: 'Articuno (Galarian)', sprite: 10169, stats: s(90, 85, 125, 85, 100, 95) },
     { name: 'Rayquaza', sprite: 384, stats: s(105, 150, 150, 90, 90, 95) },
-    { name: 'Aegislash', sprite: 681, goalie: true, stats: s(95, 90, 105, 120, 120, 65) },
+    { name: 'Aegislash', sprite: 681, goalie: true, stats: s(60, 50, 50, 140, 140, 60) },
   ],
 };
 

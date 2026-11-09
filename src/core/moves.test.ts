@@ -74,7 +74,7 @@ describe('dashSpeedAt', () => {
   });
 });
 
-describe('move paths: Spin curves round, Deke zig-zags sideways', () => {
+describe('move paths: Spin curves round, Deke fakes outside and cuts inside', () => {
   const spin = MOVE_DEFS.spin, deke = MOVE_DEFS.deke;
   const path = (m: typeof spin, side: 1 | -1 = 1) => {
     let x = 0, y = 0;
@@ -103,24 +103,21 @@ describe('move paths: Spin curves round, Deke zig-zags sideways', () => {
   it('Deke is a SIDESTEP: it goes mostly across your travel and barely toward the goal', () => {
     const p = path(deke);
     expect(Math.abs(p.y)).toBeGreaterThan(90); // a real lateral shift (angle on the goalie)
-    expect(Math.abs(p.x)).toBeLessThan(35); // …without zooming forward into the crease
+    expect(Math.abs(p.x)).toBeLessThan(55); // …without zooming forward into the crease
     expect(Math.abs(p.y)).toBeGreaterThan(Math.abs(p.x) * 3);
   });
-  it('Deke ZIG-ZAGS: the heading weaves back and forth across the sideways line', () => {
-    const lateral = deke.headFrom;
-    let crossings = 0;
-    let prev = Math.sign(dashHeading(deke, 0, 1, 0) - lateral);
-    for (let i = 1; i <= 100; i++) {
-      const sgn = Math.sign(dashHeading(deke, 0, 1, i / 100) - lateral);
-      if (sgn !== 0 && sgn !== prev) crossings++;
-      if (sgn !== 0) prev = sgn;
+  it('Deke fakes outside for about 10% of lateral travel, then cuts inside once', () => {
+    let outside = 0, inside = 0, reversals = 0, previous = -1;
+    for (let i = 0; i < 1000; i++) {
+      const ph = i / 1000;
+      const lateral = Math.sin(dashHeading(deke, 0, 1, ph)) * dashSpeedAt(deke.dash, ph);
+      if (lateral < 0) outside -= lateral;
+      else inside += lateral;
+      if (Math.sign(lateral) !== 0 && Math.sign(lateral) !== previous) { reversals++; previous = Math.sign(lateral); }
     }
-    expect(crossings).toBeGreaterThanOrEqual(2); // out, back, out
-    // …but it never turns around: the whole weave stays on the same side of the travel line.
-    for (let i = 0; i <= 100; i++) {
-      const h = dashHeading(deke, 0, 1, i / 100);
-      expect(Math.sin(h)).toBeGreaterThan(0.2);
-    }
+    expect(outside / (outside + inside)).toBeGreaterThan(0.08);
+    expect(outside / (outside + inside)).toBeLessThan(0.12);
+    expect(reversals).toBe(1);
   });
   it('Deke is unaffected by the weave when zigAmp is absent (Spin is still a smooth monotonic curve)', () => {
     expect(spin.zigAmp).toBeUndefined();
@@ -173,7 +170,7 @@ describe('dekeVerticalDir / dekeAxis', () => {
         expect(lateralSignY(MOVE_DEFS.deke, base, side)).toBe(dirY);
         for (let i = 0; i <= 20; i++) {
           const h = dashHeading(MOVE_DEFS.deke, base, side, i / 20);
-          expect(Math.sign(Math.sin(h))).toBe(dirY); // never turns back across the net
+          expect(Math.sign(Math.sin(h))).toBe(i / 20 < 0.095 ? -dirY : dirY); // fake, then cut
         }
       }
     }

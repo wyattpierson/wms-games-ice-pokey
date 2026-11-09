@@ -6,6 +6,7 @@ import type { ZoneDefinition } from './progression';
  * story flags record presentation, while these fields represent actual world state.
  */
 export interface WorldConditionState {
+  catastrophe?: boolean;
   year: number;
   towerFloor: number;
   bestTowerFloor: number;
@@ -21,6 +22,7 @@ export interface WorldConditionState {
 }
 
 export interface WorldEventCondition {
+  requireCatastrophe?: boolean;
   minYear?: number;
   maxYear?: number;
   minTowerFloor?: number;
@@ -70,8 +72,8 @@ const s = (hp:number, attack:number, specialAttack:number, defense:number, speci
 
 /**
  * World changes are data-driven. This first event is deliberately a modest example:
- * in Year 6+, once the player has cleared at least two Tower floors in any year,
- * the Coastal Circuit's Legendary Flyers return in their Galarian forms.
+ * when the catastrophe occurs,
+ * the Summit League's Legendary Flyers return in their Galarian forms.
  *
  * Add more conditions/effects here. Stable team and zone IDs must not change, because
  * campaign results and saved world progression refer to those IDs.
@@ -79,17 +81,17 @@ const s = (hp:number, attack:number, specialAttack:number, defense:number, speci
 export const WORLD_EVENTS: WorldEventDefinition[] = [
   {
     id: 'galarian-legendary-flyers',
-    description: 'After Year 5, reaching Tower floor 2 changes the Coastal boss to the Galarian Legendary Birds.',
-    when: { minYear: 6, minBestTowerFloor: 2 },
+    description: 'The catastrophe changes the Summit birds permanently, even after healing.',
+    when: { requireCatastrophe: true },
     teamOverrides: [{
-      teamId: 'sky-raiders-coastal',
-      name: 'The Galarian Flyers',
+      teamId: 'sky-raiders-summit',
+      name: 'The Galarian Birds',
       players: [
-        // Alternate specialties retain Coastal's 77 OVR boss tier.
-        { name: 'Zapdos (Galarian)', sprite: 10170, stats: s(75, 95, 55, 70, 60, 100) },
-        { name: 'Moltres (Galarian)', sprite: 10171, stats: s(75, 60, 95, 60, 80, 90) },
-        { name: 'Articuno (Galarian)', sprite: 10169, stats: s(70, 55, 100, 65, 75, 95) },
-        { name: 'Mantine', sprite: 226, goalie: true, stats: s(95, 50, 70, 90, 100, 65) },
+        // Alternate forms use their own real base stats.
+        { name: 'Zapdos (Galarian)', sprite: 10170, stats: s(90, 125, 85, 90, 90, 100) },
+        { name: 'Moltres (Galarian)', sprite: 10171, stats: s(90, 85, 100, 90, 125, 90) },
+        { name: 'Articuno (Galarian)', sprite: 10169, stats: s(90, 85, 125, 85, 100, 95) },
+        { name: 'Mantine', sprite: 226, goalie: true, stats: s(85, 40, 80, 70, 140, 70) },
       ] as Team['players'],
     }],
   },

@@ -1,3 +1,6 @@
+import { RIVAL_STARTER, STORY_CHARACTERS, STORY_RULES } from '../config/storyCampaign';
+import { coastalMissing, summitCursed } from './storyCampaign';
+import { TOWER_TEAMS } from '../config/towerTeams';
 import { STARTER_EVOLUTIONS, ZONES, type ZoneDefinition } from '../config/progression';
 import { WORLD_EVENTS, applyZoneOverride, clonePlayerOverride, type WorldConditionState } from '../config/worldEvents';
 import type { Team } from '../config/teams';
@@ -16,6 +19,7 @@ export function buildWorldState(meta: MetaState): WorldStateSnapshot {
   const starterName = starterStages?.[starterStage]?.name || null;
   const zonesClearedEver = ZONES.filter(zone => (meta.zoneBossWins[zone.id] || 0) > 0).map(zone => zone.id);
   const base: WorldConditionState = {
+    catastrophe: meta.story.catastrophe,
     year: meta.seasonYear,
     towerFloor: meta.towerFloor || 0,
     bestTowerFloor: meta.bestTowerFloor || 0,
@@ -39,6 +43,7 @@ export function getWorldState(meta: MetaState = getMeta()): WorldStateSnapshot {
 
 /** Evaluate the declarative conditions used by world events. */
 export function worldEventMatches(state: WorldConditionState, condition: import('../config/worldEvents').WorldEventCondition): boolean {
+  if (condition.requireCatastrophe && !state.catastrophe) return false;
   if (condition.minYear !== undefined && state.year < condition.minYear) return false;
   if (condition.maxYear !== undefined && state.year > condition.maxYear) return false;
   if (condition.minTowerFloor !== undefined && state.towerFloor < condition.minTowerFloor) return false;
@@ -72,6 +77,14 @@ export function resolveWorldTeam(baseTeam: Team, meta: MetaState = getMeta()): T
       };
     }
   }
+  if (team.id === 'story-rival') {
+    const starter = STARTER_EVOLUTIONS[RIVAL_STARTER[meta.starter || 'larvitar']][2];
+    const upgraded = meta.bracket?.rivalUpgraded ?? meta.story.rivalBeaten;
+    if (upgraded) team.players = TOWER_TEAMS.find(t => t.id === 'tower-warden')!.players.map(p => ({ ...p, stats: { ...p.stats } })) as Team['players'];
+    team.players[0] = { name: starter.name, sprite: starter.sprite, stats: { ...starter.stats } };
+    team.name = `${STORY_CHARACTERS.rival.name}'s ${upgraded ? 'All-Stars' : 'Aces'}`;
+  }
+  if (team.id === 'story-arceus') team.players = team.players.map(p => ({ ...p, stats: Object.fromEntries(Object.entries(p.stats).map(([key, value]) => [key, Math.round(value * STORY_RULES.finalBossStatMultiplier)])) as unknown as typeof p.stats })) as Team['players'];
   return team;
 }
 
@@ -87,6 +100,15 @@ export function resolveWorldZone(zoneId: string, meta: MetaState = getMeta()): Z
       if (override.zoneId === zone.id) zone = applyZoneOverride(zone, override);
     }
   }
+  if (zone.id === 'coastal') {
+    zone.theme = coastalMissing(meta.story) ? 'An empty sea' : 'Sunshine, salt air, and friendly competition';
+    zone.description = coastalMissing(meta.story) ? 'The island is gone. Win the championship to bring it home.' : 'Bright beaches and laid-back teams welcome a new season on the ice.';
+  }
+  if (zone.id === 'summit') {
+    zone.theme = summitCursed(meta.story) ? 'A crown twisted by the Tower' : 'Grand halls and regal champions';
+    zone.description = summitCursed(meta.story) ? 'The royal rinks rage without rest. Even the legendary birds have changed.' : 'Proud teams uphold the mountain league’s traditions beneath its soaring banners.';
+    if (summitCursed(meta.story)) zone.difficulty = Math.min(1, zone.difficulty + .15);
+  }
   return zone;
 }
 
@@ -94,3 +116,5 @@ export function resolveWorldZone(zoneId: string, meta: MetaState = getMeta()): Z
 export function worldEventSeenFlag(eventId: string): string {
   return `world-event-seen-${eventId}`;
 }
+
+export function isZoneAvailable(id: string): boolean { return id !== "coastal" || !coastalMissing(getMeta().story); }

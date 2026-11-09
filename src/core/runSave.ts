@@ -6,7 +6,8 @@
  */
 import type { CampaignState, MatchOutcome } from './campaign';
 import { POACH_STATS } from './poach';
-import { ALL_TEAMS, USER_TEAM } from '../config/teams';
+import { ALL_TEAMS, USER_TEAM, type PlayerDef } from '../config/teams';
+import { WORLD_EVENTS } from '../config/worldEvents';
 
 /** Bump when CampaignState (or Team/PlayerDef) changes shape; older saves are then discarded. */
 export const SAVE_VERSION = 2;
@@ -14,6 +15,19 @@ export const SAVE_VERSION = 2;
 const OUTCOMES: readonly string[] = ['win', 'loss'] satisfies MatchOutcome[];
 const TEAM_IDS: readonly string[] = ALL_TEAMS.map((t) => t.id);
 const FIELD_COUNT = USER_TEAM.players.filter((p) => !p.goalie).length;
+
+/** Refresh previously recruited species after roster-data corrections. */
+function refreshBaseStats(player: PlayerDef): PlayerDef {
+  // Campaign starters carry earned bonus HP and are refreshed by campaign evolution.
+  if (player.isStarter) return player;
+  const definitions = [
+    ...USER_TEAM.players,
+    ...ALL_TEAMS.flatMap(team => team.players),
+    ...WORLD_EVENTS.flatMap(event => event.teamOverrides?.flatMap(team => team.players ?? []) ?? []),
+  ];
+  const definition = definitions.find(candidate => candidate.name === player.name && candidate.sprite === player.sprite);
+  return definition ? { ...player, stats: { ...definition.stats } } : player;
+}
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -85,5 +99,12 @@ export function parseRun(raw: string | null): CampaignState | null {
   if ((run.retryUsed !== undefined && typeof run.retryUsed !== 'boolean') || !isRetrySnapshot(run.retrySnapshot)) return null;
 
   if (!Array.isArray(run.bench)) run.bench = [];
-  return run as unknown as CampaignState;
+  const state = run as unknown as CampaignState;
+  state.userTeam.players = state.userTeam.players.map(refreshBaseStats) as typeof state.userTeam.players;
+  state.bench = state.bench.map(refreshBaseStats);
+  if (state.retrySnapshot) {
+    state.retrySnapshot.userTeam.players = state.retrySnapshot.userTeam.players.map(refreshBaseStats) as typeof state.userTeam.players;
+    state.retrySnapshot.bench = state.retrySnapshot.bench.map(refreshBaseStats);
+  }
+  return state;
 }

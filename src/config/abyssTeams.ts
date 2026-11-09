@@ -4,40 +4,40 @@ import type { Team } from './teams';
 const s = (hp:number, attack:number, specialAttack:number, defense:number, specialDefense:number, speed:number) => ({hp,attack,specialAttack,defense,specialDefense,speed});
 export const TEAMS_ABYSS: Team[] = [
   {
-    id: 'knuckle-club-abyss', name: 'Deep Current', color: 0x0891b2, colorDark: 0x164e63, role: 'regular',
+    id: 'knuckle-club-abyss', name: 'Dragon Rush', color: 0x0891b2, colorDark: 0x164e63, role: 'regular',
     players: [
-      { name: 'Kingdra', sprite: 230, stats: s(90,109,114,104,109,95) },
-      { name: 'Dragalge', sprite: 691, stats: s(84,94,120,104,120,55) },
-      { name: 'Gyarados', sprite: 130, stats: s(104,120,84,104,114,100) },
+      { name: 'Kingdra', sprite: 230, stats: s(75, 95, 95, 95, 95, 85) },
+      { name: 'Dragalge', sprite: 691, stats: s(65, 75, 97, 90, 123, 44) },
+      { name: 'Gyarados', sprite: 130, stats: s(95, 125, 60, 79, 100, 81) },
       // Dondozo is slow and not especially threatening as a skater, but a miserable CPU goalie.
-      { name: 'Dondozo', sprite: 977, goalie: true, stats: s(170,105,65,120,120,30) },
+      { name: 'Dondozo', sprite: 977, goalie: true, stats: s(150, 100, 65, 115, 65, 35) },
     ],
   },
   {
-    id: 'grave-diggers-abyss', name: 'Ancient Pressure', color: 0x0f766e, colorDark: 0x134e4a, role: 'regular',
+    id: 'grave-diggers-abyss', name: 'Ultra Breakers', color: 0x0f766e, colorDark: 0x134e4a, role: 'regular',
     players: [
-      { name: 'Kartana', sprite: 798, stats: s(74,120,74,120,48,120) },
-      { name: 'Iron Valiant', sprite: 1006, stats: s(84,120,120,99,78,120) },
-      { name: 'Hydreigon', sprite: 635, stats: s(104,119,120,98,103,105) },
-      { name: 'Goodra', sprite: 706, goalie: true, stats: s(100,105,120,85,120,75) },
+      { name: 'Kartana', sprite: 798, stats: s(59, 181, 59, 131, 31, 109) },
+      { name: 'Iron Valiant', sprite: 1006, stats: s(74, 130, 120, 90, 60, 116) },
+      { name: 'Hydreigon', sprite: 635, stats: s(92, 105, 125, 90, 90, 98) },
+      { name: 'Goodra', sprite: 706, goalie: true, stats: s(90, 100, 110, 70, 150, 80) },
     ],
   },
   {
-    id: 'sparkle-squad-abyss', name: 'Abyssal All-Stars', color: 0x06b6d4, colorDark: 0x155e75, role: 'regular',
+    id: 'sparkle-squad-abyss', name: 'Quiver Dance', color: 0x06b6d4, colorDark: 0x155e75, role: 'regular',
     players: [
-      { name: 'Tapu Koko', sprite: 785, stats: s(75,120,120,90,90,120) },
-      { name: 'Dragapult', sprite: 887, stats: s(90,120,115,85,85,120) },
-      { name: 'Volcarona', sprite: 637, stats: s(100,90,120,85,120,115) },
-      { name: 'Toxapex', sprite: 748, goalie: true, stats: s(120,85,80,120,120,45) },
+      { name: 'Tapu Koko', sprite: 785, stats: s(70, 115, 95, 85, 75, 130) },
+      { name: 'Dragapult', sprite: 887, stats: s(88, 120, 100, 75, 75, 142) },
+      { name: 'Volcarona', sprite: 637, stats: s(85, 60, 135, 65, 105, 100) },
+      { name: 'Toxapex', sprite: 748, goalie: true, stats: s(50, 63, 53, 152, 142, 35) },
     ],
   },
   {
     id: 'sky-raiders-abyss', name: 'The Forces of Nature', color: 0x7c3aed, colorDark: 0x4c1d95, role: 'boss',
     players: [
-      { name: 'Tornadus', sprite: 641, stats: s(92,112,120,87,96,120) },
-      { name: 'Thundurus', sprite: 642, stats: s(92,117,120,86,91,120) },
-      { name: 'Landorus', sprite: 645, stats: s(102,120,117,106,96,110) },
-      { name: 'Enamorus', sprite: 905, goalie: true, stats: s(115,90,110,115,120,95) },
+      { name: 'Tornadus', sprite: 641, stats: s(79, 115, 125, 70, 80, 111) },
+      { name: 'Thundurus', sprite: 642, stats: s(79, 115, 125, 70, 80, 111) },
+      { name: 'Landorus', sprite: 645, stats: s(89, 125, 115, 90, 80, 101) },
+      { name: 'Lugia', sprite: 249, goalie: true, stats: s(106, 90, 90, 130, 154, 110) },
     ],
   },
 ];

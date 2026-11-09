@@ -1,5 +1,5 @@
 import type Phaser from 'phaser';
-import { PUCK_FRICTION, PUCK_RADIUS, PUCK_WALL_DAMPING } from '../../config/gameplay';
+import { BANK_PASS_RETAIN, PASS_FRICTION, PUCK_FRICTION, PUCK_RADIUS, PUCK_WALL_DAMPING } from '../../config/gameplay';
 import { GOAL_BOTTOM, GOAL_TOP, GOAL_W, ICE_X, ICE_Y, RINK_H, RINK_W } from '../../config/rink';
 import { scale, v, type Vec2 } from '../../core/vec2';
 import type { Player } from './Player';
@@ -22,12 +22,13 @@ export class Puck {
   lastPasser: Player | null = null;
   scoredBy: 0 | 1 | null = null; // which team scored (team 0 attacks right)
   /** Set while a PASS is in flight: who threw it and who it is meant for (cleared on any pickup / shot). */
-  pass: { from: Player; to: Player } | null = null;
+  pass: { from: Player; to: Player; bank?: Vec2 } | null = null;
   /** True for a one-timer: the goalie reads it late. */
   quick = false;
   /** Increments on every launch (pass or shot) — lets the goalie tell a NEW shot from the same one. */
   launchSeq = 0;
 
+  private trail: Phaser.GameObjects.Graphics;
   private body: Phaser.GameObjects.Ellipse;
   private shadow: Phaser.GameObjects.Ellipse;
   /** Possession pressure on the carrier (0..1): the puck rattles on the blade and turns red. */
@@ -37,8 +38,10 @@ export class Puck {
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.pos = v(x, y);
+    this.trail = scene.add.graphics().setDepth(15);
     this.shadow = scene.add.ellipse(0, 2, 12, 6, 0x000000).setAlpha(0.2).setDepth(15);
-    this.body = scene.add.ellipse(0, 0, PUCK_RADIUS * 2.4, PUCK_RADIUS * 1.8, 0x16181d).setDepth(16);
+    this.body = scene.add.ellipse(0, 0, PUCK_RADIUS * 2.4, PUCK_RADIUS * 1.8, 0x16181d)
+      .setStrokeStyle(1, 0xffffff, 0.9).setDepth(16);
   }
 
   reset(x: number, y: number): void {
@@ -73,7 +76,13 @@ export class Puck {
 
   /** Give the puck to a player (they become the carrier). */
   give(p: Player): void {
-    if (this.carriedBy && this.carriedBy !== p) this.carriedBy.carrying = false;
+    if (this.carriedBy && this.carriedBy !== p) {
+      this.carriedBy.carrying = false;
+      this.carriedBy.aiShotAim = null;
+      this.carriedBy.charging = false;
+      this.carriedBy.charge = 0;
+      this.carriedBy.holdT = 0;
+    }
     this.state = 'carried';
     this.carriedBy = p;
     p.carrying = true;
@@ -84,7 +93,13 @@ export class Puck {
 
   /** Fire the puck loose (pass or shot). */
   launch(dir: Vec2, speed: number, taker: Player): void {
-    if (this.carriedBy) this.carriedBy.carrying = false;
+    if (this.carriedBy) {
+      this.carriedBy.carrying = false;
+      this.carriedBy.aiShotAim = null;
+      this.carriedBy.charging = false;
+      this.carriedBy.charge = 0;
+      this.carriedBy.holdT = 0;
+    }
     this.state = 'loose';
     this.carriedBy = null;
     this.lastTaker = taker;
@@ -95,7 +110,8 @@ export class Puck {
     this.launchSeq += 1;
   }
 
-  update(dt: number): void {
+  update(dt: number, intercept?: (start: Vec2, end: Vec2) => boolean): void {
+    this.shake += dt;
     if (this.state === 'carried') {
       if (this.carriedBy) this.pos = this.carriedBy.bladeTip();
       this.vel = v();
@@ -104,8 +120,25 @@ export class Puck {
     }
     if (this.state === 'scored') return;
 
-    this.pos = v(this.pos.x + this.vel.x * dt, this.pos.y + this.vel.y * dt);
-    const mul = Math.exp(-PUCK_FRICTION * dt);
+    let start = v(this.pos.x, this.pos.y);
+    let travelTime = dt;
+    const bank = this.pass?.bank;
+    if (bank && Math.abs(this.vel.y) > 1e-6) {
+      const toBoard = (bank.y - start.y) / this.vel.y;
+      if (toBoard >= 0 && toBoard <= dt) {
+        const contact = v(start.x + this.vel.x * toBoard, bank.y);
+        if (intercept?.(start, contact)) { this.place(); return; }
+        start = contact;
+        travelTime -= toBoard;
+        // Preserve the reflection angle: damp BOTH components on a bank pass.
+        this.vel = v(this.vel.x * BANK_PASS_RETAIN, -this.vel.y * BANK_PASS_RETAIN);
+        if (this.pass) this.pass.bank = undefined;
+      }
+    }
+    const end = v(start.x + this.vel.x * travelTime, start.y + this.vel.y * travelTime);
+    if (intercept?.(start, end)) { this.place(); return; }
+    this.pos = end;
+    const mul = Math.exp(-(this.pass ? PASS_FRICTION : PUCK_FRICTION) * dt);
     this.vel = scale(this.vel, mul);
 
     const minX = ICE_X + PUCK_RADIUS;
@@ -169,12 +202,24 @@ export class Puck {
     let jx = 0;
     let jy = 0;
     if (this.state === 'carried' && this.pressure > 0.3) {
-      this.shake += 1;
       const amp = (this.pressure - 0.3) * 5.5;
-      jx = Math.sin(this.shake * 2.9) * amp;
-      jy = Math.cos(this.shake * 3.7) * amp;
+      jx = Math.sin(this.shake * 174) * amp;
+      jy = Math.cos(this.shake * 222) * amp;
+    }
+    this.trail.clear();
+    if (this.state === 'loose' && this.pass?.bank) {
+      this.trail.lineStyle(2, 0x57c9e8, 0.8);
+      this.trail.strokeCircle(this.pass.bank.x, this.pass.bank.y, 8);
+    }
+    const speed = Math.hypot(this.vel.x, this.vel.y);
+    if (this.state === 'loose' && speed > 300) {
+      const length = Math.min(34, (speed - 300) * 0.055);
+      this.trail.lineStyle(5, 0x346080, 0.24);
+      this.trail.lineBetween(this.pos.x, this.pos.y, this.pos.x - this.vel.x / speed * length, this.pos.y - this.vel.y / speed * length);
+      this.trail.lineStyle(2, 0xffffff, 0.85);
+      this.trail.lineBetween(this.pos.x, this.pos.y, this.pos.x - this.vel.x / speed * length * 0.7, this.pos.y - this.vel.y / speed * length * 0.7);
     }
     this.body.setPosition(this.pos.x + jx, this.pos.y + jy);
-    this.shadow.setPosition(this.pos.x + jx, this.pos.y + jy);
+    this.shadow.setPosition(this.pos.x + jx, this.pos.y + jy + 3);
   }
 }

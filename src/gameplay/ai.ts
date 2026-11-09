@@ -11,7 +11,7 @@
 
 import {
   FRIENDLY_GOALIE_BITE, FRIENDLY_GOALIE_LAG, FRIENDLY_GOALIE_READ, GOALIE_BITE_OFFSET, GOALIE_DEPTH,
-  GOALIE_DIVE_FACTOR, GOALIE_FOOL_RANGE, GOALIE_FOOL_SPEED, GOALIE_SHOT_SPEED, ONE_TIMER_REACT_MULT,
+  GOALIE_DIVE_FACTOR, GOALIE_FOOL_TIME, GOALIE_FOOL_RANGE, GOALIE_FOOL_SPEED, GOALIE_SHOT_SPEED, ONE_TIMER_REACT_MULT,
   PARRY_RANGE, SHOT_RANGE,
 } from '../config/gameplay';
 import type { Difficulty } from '../config/difficulty';
@@ -20,6 +20,7 @@ import {
 } from '../config/rink';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
 import { ALL_MOVES, lateralSignY, MOVE_DEFS, type MoveId } from '../core/moves';
+import { chargeFromHold, shotDirection } from '../core/shot';
 import { chooseGoalieOutlet, planGoalieResponse } from '../core/goalie';
 import { planAiResponse } from '../core/aiPlan';
 import type { Player } from './entities/Player';
@@ -69,6 +70,14 @@ export function stepAI(p: Player, w: AIWorld): void {
   if (p.isGoalie) return stepGoalie(p, w);
   if (p.carrying) return stepCarrier(p, w);
 
+  const friendlyPossession = w.puck.carriedBy?.team === p.team || w.puck.pass?.from.team === p.team;
+  if (!friendlyPossession) { p.giveGoT = 0; p.giveGoTarget = null; }
+  if (p.giveGoT > 0 && p.giveGoTarget) {
+    const run = sub(p.giveGoTarget, p.pos);
+    if (len(run) > 12) p.applyInput(norm(run), w.dt);
+    else p.coast(w.dt);
+    return;
+  }
   if (w.puck.state === 'loose' && p.aiChase) {
     const d = sub(w.puck.pos, p.pos);
     if (len(d) > 6) p.applyInput(norm(d), w.dt);
@@ -234,9 +243,29 @@ function nearestOpponent(w: AIWorld, team: number, at: Vec2): Player | null {
   return best;
 }
 
+function startSlapshot(p: Player, aimY: number, charge: number): void {
+  p.aiShotAim = aimY; p.aiShotCharge = charge;
+  p.charging = true; p.charge = 0; p.holdT = 0;
+}
+
 function stepCarrier(p: Player, w: AIWorld): void {
+  if (p.aiShotAim !== null) {
+    p.charging = true;
+    p.holdT += w.dt;
+    p.charge = chargeFromHold(p.holdT);
+    const aim = shotDirection(p.pos, p.team === 0 ? ICE_X + RINK_W : ICE_X, p.aiShotAim);
+    p.facing = Math.atan2(aim.y, aim.x);
+    p.coast(w.dt);
+    if (p.charge >= p.aiShotCharge) {
+      const aimY = p.aiShotAim, charge = p.charge;
+      p.aiShotAim = null;
+      w.shoot(p, aimY, charge);
+      p.charging = false; p.charge = 0; p.holdT = 0;
+    }
+    return;
+  }
   // Committed to a juke: ride it out (tell → effect), no steering.
-  if (p.move && !p.moveResolved) {
+  if (p.move) {
     p.coast(w.dt);
     return;
   }
@@ -246,7 +275,7 @@ function stepCarrier(p: Player, w: AIWorld): void {
   // The goalie just got fooled by our move: take the open net while the window lasts.
   const eg = w.players.find((e) => e.team !== p.team && e.isGoalie);
   if (eg && eg.fooledT > 0 && !eg.foolSpent && eg.openSign !== 0 && dist(p.pos, enemyGoal) < SHOT_RANGE + 60 && w.rng() < w.diff.aiFoolShotRate * w.dt) {
-    w.shoot(p, eg.openSign * (0.75 + w.rng() * 0.2), 0.5);
+    startSlapshot(p, eg.openSign * (0.75 + w.rng() * 0.2), 0.5);
     return;
   }
 
@@ -279,7 +308,7 @@ function stepCarrier(p: Player, w: AIWorld): void {
     if (dGoal < SHOT_RANGE) {
       if (w.rng() < 0.6 || !rec) {
         // Pick a spot on the goal mouth; low levels are sloppy (can shoot wide).
-        w.shoot(p, (w.rng() * 2 - 1) * w.diff.aiShotSpread, 0.85 + w.rng() * 0.15);
+        startSlapshot(p, (w.rng() * 2 - 1) * w.diff.aiShotSpread, 0.85 + w.rng() * 0.15);
       } else {
         w.pass(p, rec);
       }
@@ -409,7 +438,11 @@ function stepGoalie(p: Player, w: AIWorld): void {
   const shade = clamp(GOALIE_DEPTH / dx, 0.2, 0.9);
   let ty = clamp(CENTER_Y + (track.y - CENTER_Y) * shade, GOAL_TOP - 6, GOAL_BOTTOM + 6);
   // Biting = committed to the fake side outright (not just nudged): that is what leaves the other corner open.
-  if (biteDir !== 0) ty = clamp(CENTER_Y + biteDir * GOALIE_BITE_OFFSET, GOAL_TOP - 6, GOAL_BOTTOM + 6);
+  if (biteDir !== 0) {
+    const commitment = live ? 1 : Math.min(1, p.fooledT / GOALIE_FOOL_TIME);
+    const fakeY = clamp(CENTER_Y + biteDir * GOALIE_BITE_OFFSET, GOAL_TOP - 6, GOAL_BOTTOM + 6);
+    ty += (fakeY - ty) * commitment;
+  }
 
   const sp = len(puck.vel);
   // A pass is not a shot. And a NEW launch restarts the reaction clock (otherwise the

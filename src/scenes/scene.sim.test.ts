@@ -280,7 +280,7 @@ describe('juke payoff for the player (the "moves felt bad" regression)', () => {
     console.log(`\nover the dash window:  spin ${spin.dist.toFixed(0)}px vs sprint ${sprintSpin.dist.toFixed(0)}px  ·  deke fwd ${deke.dx.toFixed(0)} / lateral ${deke.dy.toFixed(0)}px (sprint fwd ${sprintDeke.dx.toFixed(0)})`);
     expect(spin.dist).toBeGreaterThan(sprintSpin.dist + 30);
     expect(Math.abs(deke.dy)).toBeGreaterThan(85); // a real shift in shooting angle
-    expect(deke.dx).toBeLessThan(sprintDeke.dx * 0.5); // …that does not carry you into the crease
+    expect(deke.dx).toBeLessThan(sprintDeke.dx * 0.8); // …that does not carry you into the crease
   });
 
   it('you can aim the dash: point DOWN at the end of the tell and the dash goes down', () => {
@@ -695,10 +695,11 @@ describe('moves go to different places (offense feel)', () => {
     expect(headings[headings.length - 1]).toBeLessThan(0.3);
     for (let i = 1; i < headings.length; i++) expect(headings[i]).toBeLessThanOrEqual(headings[i - 1] + 1e-6);
   });
-  it('Deke ZIG-ZAGS sideways: the heading weaves but the whole path goes across your travel', () => {
+  it('Deke has a small outside fake before its sustained inside cut', () => {
     const { headings, dx, dy } = dashRun('deke');
     expect(Math.max(...headings) - Math.min(...headings)).toBeGreaterThan(0.6); // it weaves
-    for (const h of headings) expect(Math.sin(h)).toBeGreaterThan(0.2); // …never turning back on itself
+    expect(Math.sin(headings[0])).toBeLessThan(0);
+    expect(Math.sin(headings[headings.length - 1])).toBeGreaterThan(0.2); // …never turning back on itself
     expect(Math.abs(dy)).toBeGreaterThan(Math.abs(dx) * 3); // mostly lateral
   });
   it('both go AWAY from the nearest defender', () => {
@@ -1281,12 +1282,15 @@ describe('goalies take part in the juke game', () => {
     expect(g.shotCue?.inWindow).toBe(true);
   });
 
-  it('the next shot is a SNAP SHOT (goalie reads it late) — and it uses the window up', () => {
+  it('a fooled goalie gives a positional opening without extra power or delayed reads', () => {
     const { s, popups, g, me } = setup(1, 'bite');
     land(s, me);
+    const remaining = g.fooledT;
     s.shootPuck(me, 0.9, 0);
-    expect(popups).toContain('SNAP SHOT!');
-    expect(s.puck.quick).toBe(true);
+    expect(popups).toContain('OPEN SHOT!');
+    expect(speed(s.puck)).toBeCloseTo(C.SHOT_SPEED_MIN * me.stats.shotPower);
+    expect(g.fooledT).toBe(remaining);
+    expect(s.puck.quick).toBe(false);
     expect(g.foolSpent).toBe(true);
     s.puck.state = 'carried'; s.puck.carriedBy = me; me.carrying = true;
     s.shootPuck(me, 0.9, 0); // a second shot in the same window is an ordinary one
@@ -1366,48 +1370,425 @@ describe('goalies take part in the juke game', () => {
   });
 });
 
-describe('calibration: juke → snap shot is a real option, not a cheat code', () => {
-  /** Attacker ~236px out, no defenders; the goalie ROLLS for itself. Deke, wait for the dash, shoot the open side. */
-  function attempt(level: number, kind: 'juke' | 'straight', respect = 0) {
-    releaseAll();
-    const s: any = new GameScene(); s.opponentIdx = 0; s.create(); s.diff = difficultyAt(level); s.state = 'live';
-    for (const p of s.players) { p.vel = { x: 0, y: 0 }; if (!(p.team === 1 && p.isGoalie)) { p.pos = { x: 60, y: 60 }; p.stagger = 999; } }
-    const g = s.players.find((p: any) => p.team === 1 && p.isGoalie);
-    const me = s.players[0];
-    unfreeze(me, g.home.x - 236, 336 + (Math.random() - 0.5) * 120);
-    s.grantPuck(me); s.puck.update(0.016); step(s, 40);
-    if (respect > 0) { g.respect = respect; g.lastFooled = 'deke'; }
-    if (kind === 'straight') s.shootPuck(me, (Math.random() < 0.5 ? -1 : 1) * 0.9, 0.9);
-    else {
-      me.moveCd = 0; me.startMove('deke', 1, null);
-      while (me.move && !me.moveResolved) step(s);
-      step(s, 1);
-      const open = g.fooledT > 0 ? g.openSign : (me.pos.y < 336 ? 1 : -1);
-      while (me.move) step(s);
-      if (s.puck.carriedBy === me) s.shootPuck(me, open * 0.9, 0);
-    }
-    for (let i = 0; i < 200 && s.score[0] === 0; i++) step(s);
-    return s.score[0] > 0;
-  }
-  const rate = (level: number, kind: 'juke' | 'straight', respect = 0, n = 100) => {
-    let goals = 0;
-    for (let i = 0; i < n; i++) if (attempt(level, kind, respect)) goals++;
-    return goals / n;
-  };
+describe('gameplay feel upgrades', () => {
+  it('Pass+ changes only the owning team and normal passes remain available without it', () => {
+    const { s } = makeScene(0);
+    s.testMode = true;
+    const passer = s.players[0], receiver = s.players[1];
+    unfreeze(passer, 400, 300); unfreeze(receiver, 700, 300);
+    s.grantPuck(passer); s.doPass(passer, receiver);
+    const baseline = speed(s.puck);
+    expect(baseline).toBeCloseTo(C.PASS_SPEED * passer.stats.passPower);
+    s.testItemIds = ['pass-plus'];
+    s.grantPuck(passer); s.doPass(passer, receiver);
+    expect(speed(s.puck)).toBeCloseTo(baseline * 1.25);
+    const enemy = s.players[4], enemyMate = s.players[5];
+    s.grantPuck(enemy); s.doPass(enemy, enemyMate);
+    expect(speed(s.puck)).toBeCloseTo(C.PASS_SPEED * enemy.stats.passPower);
+  });
 
-  it('at full difficulty it converts roughly a quarter to a third of the time — far better than a straight shot from there', () => {
-    const jk = rate(1, 'juke'), st = rate(1, 'straight');
-    console.log(`\njuke → snap shot @236px: L1 ${(jk * 100).toFixed(0)}% vs straight charged shot ${(st * 100).toFixed(0)}%`);
-    expect(st).toBeLessThan(0.1);
-    expect(jk).toBeGreaterThan(0.12);
-    expect(jk).toBeLessThan(0.5);
+  it('receiving a pass triggers powers and a bounded give-and-go, launching it does not', () => {
+    const { s } = makeScene(0);
+    const passer = s.players[0], receiver = s.players[1];
+    unfreeze(passer, 400, 300); unfreeze(receiver, 700, 300);
+    s.grantPuck(passer);
+    const emit = vi.spyOn(s, 'emitPowerEvent');
+    s.doPass(passer, receiver);
+    expect(emit.mock.calls.some(call => call[0] === 'passComplete')).toBe(false);
+    expect(passer.giveGoT).toBe(0);
+    s.controlled = receiver; // suppress AI one-timer for this catch
+    s.grantPuck(receiver);
+    expect(emit).toHaveBeenCalledWith('passComplete', passer);
+    expect(passer.giveGoT).toBe(C.GIVE_GO_TIME);
+    expect(passer.giveGoTarget.x).toBeGreaterThan(passer.pos.x);
+    expect(receiver.receiveAnim).toBeGreaterThan(0);
+    s.resetPositions();
+    expect(passer.giveGoT).toBe(0);
+    expect(passer.giveGoTarget).toBeNull();
   });
-  it('it is more forgiving at low levels', () => {
-    expect(rate(0, 'juke')).toBeGreaterThan(rate(1, 'juke'));
+
+  it('an interception earns neither a completed-pass power nor a give-and-go', () => {
+    const { s } = makeScene(0);
+    const passer = s.players[0];
+    s.grantPuck(passer);
+    const emit = vi.spyOn(s, 'emitPowerEvent');
+    s.doPass(passer, s.players[1]); s.grantPuck(s.players[4]);
+    expect(emit.mock.calls.some(call => call[0] === 'passComplete')).toBe(false);
+    expect(passer.giveGoT).toBe(0);
   });
-  it('repeating the move on a goalie who just got beaten works far worse (respect + the same move)', () => {
-    const fresh = rate(1, 'juke'), respected = rate(1, 'juke', 0.36);
-    console.log(`fresh goalie ${(fresh * 100).toFixed(0)}% → after being fooled twice ${(respected * 100).toFixed(0)}%`);
-    expect(respected).toBeLessThan(fresh * 0.6);
+
+  it('fast intended passes are catchable without a random handling penalty', () => {
+    const { s } = makeScene(0);
+    const passer = s.players[0], receiver = s.players[1];
+    unfreeze(passer, 400, 300); unfreeze(receiver, 700, 300);
+    s.grantPuck(passer); s.doPass(passer, receiver);
+    s.controlled = receiver;
+    s.puck.vel = { x: 1000, y: 0 }; s.puck.pos = { ...receiver.pos };
+    s.tryPickup();
+    expect(s.puck.carriedBy).toBe(receiver);
+  });
+
+  it('Check+ adds pressure and stagger without extra damage or knockback', () => {
+    const hit = (enabled: boolean) => {
+      const { s } = makeScene(0);
+      s.testMode = true; s.testItemIds = enabled ? ['check-plus'] : [];
+      const checker = s.players[0], carrier = s.players[4];
+      unfreeze(checker, 400, 300); unfreeze(carrier, 440, 300);
+      s.grantPuck(carrier); s.checkHit(checker, carrier, 0);
+      return { pressure: carrier.pressure, stagger: carrier.stagger, hp: carrier.hp, speed: speed(carrier) };
+    };
+    const normal = hit(false), boosted = hit(true);
+    expect(boosted.pressure).toBeCloseTo(normal.pressure * 1.25);
+    expect(boosted.stagger).toBeCloseTo(normal.stagger * 1.15);
+    expect(boosted.hp).toBe(normal.hp);
+    expect(boosted.speed).toBe(normal.speed);
+  });
+
+  it('a missed check has recovery; a landed check does not', () => {
+    for (const landed of [false, true]) {
+      const { s } = makeScene(0);
+      const checker = s.players[0];
+      unfreeze(checker, 400, 300); s.doCheck(checker);
+      if (landed) checker.checkHit.add(s.players[4]);
+      checker.update(C.CHECK_TIME + 0.01, s.puck.pos);
+      expect(checker.checkRecovery > 0).toBe(!landed);
+    }
+  });
+
+  it('a goalie gets only one failed save attempt for a shot across multiple frames', () => {
+    const { s } = makeScene(0);
+    const goalie = s.players.find((p: any) => p.team === 1 && p.isGoalie);
+    unfreeze(goalie, 1100, 300);
+    s.puck.launch({ x: 1, y: 0 }, 1000, s.players[0]);
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    try {
+      expect(s.goalieSaves({ x: 1060, y: 300 }, { x: 1080, y: 300 })).toBe(false);
+      expect(s.goalieSaves({ x: 1080, y: 300 }, { x: 1100, y: 300 })).toBe(false);
+      expect(rng).toHaveBeenCalledTimes(1);
+    } finally { rng.mockImplementation(mulberry(1234)); }
+  });
+
+  it.each([false, true])('a swept save resolves before the goal line (pass: %s)', (isPass) => {
+    const { s } = makeScene(0);
+    const goalie = s.players.find((p: any) => p.team === 1 && p.isGoalie);
+    unfreeze(goalie, 1112, 336);
+    s.puck.pos = { x: 1050, y: 336 };
+    s.puck.launch({ x: 1, y: 0 }, 3000, s.players[0]);
+    if (isPass) s.puck.pass = { from: s.players[0], to: s.players[1] };
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      s.puck.update(0.05, (a: any, b: any) => s.goalieSaves(a, b));
+      expect(s.puck.state).toBe('loose');
+      expect(s.puck.scoredBy).toBeNull();
+      expect(s.puck.vel.x).toBeLessThan(0);
+      expect(s.puck.pos.x).toBeLessThan(goalie.pos.x);
+      expect(s.puck.pass).toBeNull();
+    } finally { rng.mockImplementation(mulberry(1234)); }
+  });
+});
+
+describe('wall passes and interruptible shots', () => {
+  it.each([-1, 1] as const)('requires the item and reaches a stationary receiver after one board bounce (%s)', board => {
+    releaseAll();
+    const { s } = makeScene(0);
+    s.testMode = true;
+    const from = s.players[0], to = s.players[1];
+    unfreeze(from, 350, 300); unfreeze(to, 800, 400);
+    s.grantPuck(from);
+    const seq = s.puck.launchSeq;
+    s.doPass(from, to, board);
+    expect(s.puck.launchSeq).toBe(seq);
+    expect(s.puck.carriedBy).toBe(from);
+    s.testItemIds = ['wall-pass'];
+    s.doPass(from, to, board);
+    expect(s.puck.pass.bank).toBeDefined();
+    expect(s.incomingPass(to)?.eta).toBeGreaterThan(0.45);
+    let bounced = false;
+    // Physics and catches in isolation: avoid AI steering the receiver away.
+    s.controlled = to;
+    for (let i = 0; i < 240 && !to.carrying; i++) {
+      s.puck.update(1 / 60);
+      if (!s.puck.pass?.bank) bounced = true;
+      s.tryPickup();
+    }
+    expect(bounced).toBe(true);
+    expect(s.puck.carriedBy).toBe(to);
+    expect(s.puck.lastPasser).toBe(from);
+    expect(to.receivedByPass).toBe(true);
+  });
+
+  it('a checked wind-up is cancelled and holding Shoot does not restart it', () => {
+    releaseAll();
+    const { s, popups } = makeScene(0);
+    const shooter = s.players[0], checker = s.players[4];
+    unfreeze(shooter, 600, 336); unfreeze(checker, 640, 336);
+    s.grantPuck(shooter); step(s);
+    hold('SHIFT'); step(s, 10);
+    expect(shooter.charging).toBe(true);
+    s.doCheck(checker);
+    expect(shooter.charging).toBe(false);
+    expect(shooter.charge).toBe(0);
+    expect(popups).toContain('SHOT INTERRUPTED');
+    checker.pos = { x: 100, y: 100 }; checker.stagger = 999;
+    step(s, 50);
+    expect(shooter.shotInterrupted).toBe(true);
+    expect(shooter.charging).toBe(false);
+    expect(s.balanceMetrics.shots).toBe(0);
+    release('SHIFT'); step(s);
+    hold('SHIFT'); step(s, 10);
+    expect(shooter.charging).toBe(true);
+    release('SHIFT'); step(s);
+    expect(s.balanceMetrics.shots).toBe(1);
+    releaseAll();
+  });
+
+  it('AI slapshots have a wind-up and a landed check cancels the pending shot', () => {
+    releaseAll();
+    const { s } = makeScene(0);
+    const shooter = s.players[4], checker = s.players[0];
+    unfreeze(shooter, 240, 336); unfreeze(checker, 700, 100);
+    s.grantPuck(shooter);
+    shooter.aiShotAim = 0.8; shooter.aiShotCharge = 0.9; shooter.charging = true;
+    step(s, 6);
+    expect(shooter.charge).toBeGreaterThan(0);
+    expect(s.puck.carriedBy).toBe(shooter);
+    checker.pos = { x: shooter.pos.x + 35, y: shooter.pos.y };
+    s.doCheck(checker);
+    expect(shooter.aiShotAim).toBeNull();
+    expect(shooter.charging).toBe(false);
+    expect(s.puck.carriedBy).toBe(shooter);
+  });
+
+  it('charging draws the stick back without dragging the puck behind the shooter', () => {
+    const { s } = makeScene(0);
+    const shooter = s.players[0];
+    unfreeze(shooter, 500, 336); s.grantPuck(shooter);
+    shooter.charging = true; shooter.charge = 0.2;
+    const start = shooter.bladeTip();
+    const lowAngle = shooter.stickAngle();
+    shooter.charge = 1;
+    expect(shooter.bladeTip()).toEqual(start);
+    expect(shooter.stickAngle()).toBeLessThan(lowAngle - 0.7);
+    s.shootPuck(shooter, 0, 1);
+    expect(s.puck.pos).toEqual(start);
+    expect(shooter.releaseAngle).toBe(shooter.facing);
+  });
+});
+
+import { deriveStats } from '../core/stats';
+import { MEGA_STARTER_FORMS } from '../core/permanentItems';
+import { STARTER_EVOLUTIONS } from '../config/progression';
+
+describe('upgraded Salamence shooting balance', () => {
+  it.each([false, true])('a deke followed by a charged shot is scoreable, not automatic (Mega: %s)', mega => {
+    const stats = deriveStats(mega ? MEGA_STARTER_FORMS.bagon.stats : STARTER_EVOLUTIONS.bagon[2].stats);
+    const rng = vi.spyOn(Math, 'random').mockImplementation(mulberry(90210));
+    try {
+      for (const level of [0, 0.75]) {
+        let goals = 0, repeats = 0;
+        const count = 80;
+        for (let n = 0; n < count; n++) {
+          releaseAll();
+          const { s } = makeScene(level);
+          const me = s.players[0], goalie = s.players.find((p: any) => p.team === 1 && p.isGoalie);
+          me.setForm(mega ? 'Mega Salamence' : 'Salamence', mega ? 10089 : 373, stats);
+          unfreeze(goalie, goalie.home.x, goalie.home.y);
+          unfreeze(me, goalie.home.x - 200, 336 + (n % 9 - 4) * 24);
+          s.grantPuck(me); step(s, 30);
+          if (n >= count / 2) { goalie.respect = 0.44; goalie.lastFooled = 'deke'; }
+          me.startMove('deke', 1, null);
+          while (me.move) step(s);
+          const aim = goalie.pos.y < 336 ? 1 : -1;
+          // Real controls: the player must wind up instead of receiving a free full-power tap.
+          hold('SHIFT'); hold(aim < 0 ? 'UP' : 'DOWN'); step(s, 30);
+          release('SHIFT'); release(aim < 0 ? 'UP' : 'DOWN'); step(s);
+          for (let i = 0; i < 90 && s.score[0] === 0; i++) step(s);
+          if (s.score[0] > 0) { goals++; if (n >= count / 2) repeats++; }
+        }
+        console.log(`${mega ? 'Mega ' : ''}Salamence deke + charged shot, level ${level}: ${goals}/${count}; repeat ${repeats}/${count / 2}`);
+        expect(goals / count).toBeGreaterThan(0.02);
+        expect(goals / count).toBeLessThan(0.6);
+        expect(repeats / (count / 2)).toBeLessThan(0.6);
+      }
+    } finally { rng.mockImplementation(mulberry(1234)); releaseAll(); }
+  });
+});
+
+describe('skating response', () => {
+  it('accelerates consistently across frame rates', () => {
+    const { s } = makeScene(0);
+    const p = s.players[0];
+    unfreeze(p, 300, 300);
+    p.controlled = true;
+    for (let i = 0; i < 30; i++) p.applyInput({ x: 1, y: 0 }, 1 / 30);
+    const at30 = p.vel.x;
+    p.vel = { x: 0, y: 0 };
+    for (let i = 0; i < 144; i++) p.applyInput({ x: 1, y: 0 }, 1 / 144);
+    expect(p.vel.x).toBeCloseTo(at30, 8);
+  });
+
+  it('reverses promptly and preserves tangential motion at a board', () => {
+    const { s } = makeScene(0);
+    const p = s.players[0];
+    unfreeze(p, 300, 300);
+    p.controlled = true;
+    p.vel = { x: 200, y: 0 };
+    for (let i = 0; i < 6; i++) p.applyInput({ x: -1, y: 0 }, 1 / 60);
+    expect(p.vel.x).toBeLessThan(0);
+    p.pos = { x: 72, y: 300 };
+    p.vel = { x: -200, y: 100 };
+    p.update(1 / 60, { x: 500, y: 300 });
+    expect(p.pos.x).toBe(71);
+    expect(p.vel.x).toBe(0);
+    expect(p.vel.y).toBe(100);
+  });
+});
+
+// These run last so adding training coverage doesn't perturb the seeded balance simulations above.
+describe('Training Rink uses the real match simulation', () => {
+  function training(drill: import('../config/training').DrillId, onboarding = false) {
+    for (const key of H.keys.values()) { key.isDown = false; key._just = false; }
+    vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {}, location: { search: '' } });
+    const s: any = new GameScene();
+    s.init({ practice: { drill, onboarding } });
+    s.scene = { start: vi.fn(), restart: vi.fn() };
+    s.create();
+    s.practice.advance();
+    return s;
+  }
+  function until(s: any, condition: () => boolean, limit = 900) {
+    for (let i = 0; i < limit && !condition(); i++) step(s);
+    expect(condition()).toBe(true);
+  }
+  const tap = (s: any, key: string) => { press(key); step(s); release(key); };
+  function charged(s: any, aim: 'UP' | 'DOWN' | null, frames: number) {
+    press('SHIFT'); if (aim) press(aim);
+    step(s, frames);
+    release('SHIFT'); if (aim) release(aim);
+    step(s);
+  }
+
+  it('waits for the learner and counts skating gates in order', () => {
+    const s = training('skate', true);
+    s.practice.ready = false;
+    const before = { ...s.players[0].pos };
+    press('RIGHT'); step(s, 30); release('RIGHT');
+    expect(s.players[0].pos).toEqual(before);
+    s.practice.advance();
+    s.players[0].pos = { x: 730, y: 420 }; step(s);
+    expect(s.practice.progress).toBe(0);
+    for (const pos of [{ x: 450, y: 290 }, { x: 730, y: 420 }, { x: 500, y: 460 }]) {
+      s.players[0].pos = pos; step(s);
+    }
+    expect(s.practice.complete).toBe(true);
+    expect(s.score).toEqual([0, 0]);
+    s.practice.advance();
+    expect(s.scene.restart).toHaveBeenCalledWith({ practice: { drill: 'pass', onboarding: true } });
+  });
+  it('completes passes with automatic receiver control, without hidden players intercepting', () => {
+    const s = training('pass');
+    for (let count = 1; count <= 3; count++) {
+      tap(s, 'SPACE');
+      until(s, () => s.practice.progress === count);
+      if (count < 3) step(s, 2);
+    }
+    expect(s.practice.complete).toBe(true);
+    expect(s.players.filter((p: any) => !p.down)).toHaveLength(2);
+    expect(s.campaign).toBe(false);
+    expect(s.testMode).toBe(false);
+    s.practice.advance();
+    expect(s.scene.start).toHaveBeenCalledWith('TrainingMenuScene');
+  });
+  it('requires top then bottom corner goals and retries a centre shot immediately', () => {
+    const s = training('shoot', true);
+    charged(s, null, 30);
+    until(s, () => s.practice.resetIn > 0);
+    expect(s.practice.progress).toBe(0);
+    until(s, () => s.practice.resetIn === 0);
+    charged(s, 'UP', 30);
+    until(s, () => s.practice.progress === 1);
+    until(s, () => s.practice.resetIn === 0);
+    charged(s, 'DOWN', 30);
+    until(s, () => s.practice.complete);
+    expect(s.score).toEqual([0, 0]);
+    s.practice.advance();
+    expect(s.scene.start).toHaveBeenCalledWith('TrainingMenuScene', { startFirstMatch: true });
+  });
+  it('accepts actual perfect releases and rejects early shots', () => {
+    const s = training('timing');
+    charged(s, null, 6);
+    expect(s.practice.progress).toBe(0);
+    expect(s.practice.resetIn).toBeGreaterThan(0);
+    until(s, () => s.practice.resetIn === 0);
+    charged(s, null, 30);
+    expect(s.practice.progress).toBe(1);
+    until(s, () => s.practice.resetIn === 0);
+    charged(s, null, 30);
+    expect(s.practice.complete).toBe(true);
+  });
+  it('teaches a pass out of actual pressure, then a successful juke', () => {
+    const s = training('pressure');
+    until(s, () => s.players[0].pressure > .2);
+    tap(s, 'SPACE');
+    until(s, () => s.practice.progress === 1);
+    until(s, () => s.practice.resetIn === 0);
+    until(s, () => s.players[0].pressure > .2);
+    tap(s, 'F');
+    until(s, () => s.practice.complete);
+  });
+  it('teaches checks without pretending that checks instantly steal', () => {
+    const s = training('check');
+    for (let count = 1; count <= 2; count++) {
+      until(s, () => Math.abs(s.players[4].pos.x - s.players[0].pos.x) < 43);
+      tap(s, 'SHIFT');
+      expect(s.practice.progress).toBe(count);
+      expect(s.puck.carriedBy).toBe(s.players[4]);
+      if (count < 2) until(s, () => s.practice.resetIn === 0);
+    }
+    expect(s.practice.complete).toBe(true);
+  });
+  it('keeps the carrier available long enough to parry both actual tell windows', () => {
+    const s = training('parry');
+    for (const [index, key] of ['E', 'F'].entries()) {
+      until(s, () => {
+        const car = s.players[4];
+        return car.move && car.moveT >= car.tellDur - windowSeconds(car.tellDur, s.players[0].stats.parryFrac) / 2;
+      });
+      tap(s, key);
+      expect(s.practice.progress).toBe(index + 1);
+      expect(s.puck.carriedBy).toBe(s.players[0]);
+      if (index === 0) until(s, () => s.practice.resetIn === 0);
+    }
+    expect(s.practice.complete).toBe(true);
+  });
+  it('feeds real passes and accepts timed one-timers twice', () => {
+    const s = training('one-timer');
+    for (let count = 1; count <= 2; count++) {
+      until(s, () => { const incoming = s.incomingPass(s.players[0]); return incoming && incoming.eta < .3; });
+      tap(s, 'SHIFT');
+      until(s, () => s.practice.progress === count);
+      expect(s.puck.quick).toBe(true);
+      if (count < 2) until(s, () => s.practice.resetIn === 0);
+    }
+    expect(s.practice.complete).toBe(true);
+  });
+
+  it('never changes campaign, calendar, currency, XP, roster, or career stats during practice', async () => {
+    const meta = await import('../state/metaStore');
+    const runs = await import('../state/runStore');
+    const career = await import('../state/careerStatsStore');
+    const beforeMeta = meta.getMeta();
+    const beforeRun = JSON.stringify(runs.getRun());
+    const beforeCareer = career.getCareerStats();
+    const s = training('shoot');
+    charged(s, 'UP', 30);
+    until(s, () => s.practice.progress === 1);
+    until(s, () => s.practice.resetIn === 0);
+    charged(s, 'DOWN', 30);
+    until(s, () => s.practice.complete);
+    expect(JSON.stringify(runs.getRun())).toBe(beforeRun);
+    expect(career.getCareerStats()).toEqual(beforeCareer);
+    expect({ ...meta.getMeta(), flags: [] }).toEqual({ ...beforeMeta, flags: [] });
+    expect(meta.getMeta().flags).toContain('training-complete-shoot');
   });
 });

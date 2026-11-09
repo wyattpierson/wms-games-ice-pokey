@@ -4,28 +4,29 @@ import { getMeta } from '../state/metaStore';
 import { buildWorldState, resolveWorldTeam, worldEventMatches } from './worldState';
 
 describe('world state event rules', () => {
-  it('changes the Coastal boss to Galarian Legendary Birds in Year 6 after a two-floor Tower run', () => {
+  it('changes the Summit birds at the catastrophe and preserves their forms after restoration', () => {
     const meta = {
       ...getMeta(),
+      story: { ...getMeta().story, catastrophe: true, restorationWins: 2 },
       seasonYear: 6,
       bestTowerFloor: 2,
       towerFloor: 0,
     };
     const state = buildWorldState(meta);
     expect(state.activeEventIds).toContain('galarian-legendary-flyers');
-    const base = ALL_TEAMS.find(team => team.id === 'sky-raiders-coastal')!;
+    const base = ALL_TEAMS.find(team => team.id === 'sky-raiders-summit')!;
     const changed = resolveWorldTeam(base, meta);
-    expect(changed.name).toBe('The Galarian Flyers');
+    expect(changed.name).toBe('The Galarian Birds');
     expect(changed.players.map(player => player.name)).toEqual([
       'Zapdos (Galarian)', 'Moltres (Galarian)', 'Articuno (Galarian)', 'Mantine',
     ]);
     expect(changed.players.map(player => player.sprite)).toEqual([10170, 10171, 10169, 226]);
   });
 
-  it('does not activate the Galarian event before Year 6 or before two Tower floors are cleared', () => {
-    const base = ALL_TEAMS.find(team => team.id === 'sky-raiders-coastal')!;
+  it('does not change birds from year or Tower records alone', () => {
+    const base = ALL_TEAMS.find(team => team.id === 'sky-raiders-summit')!;
     expect(buildWorldState({ ...getMeta(), seasonYear: 5, bestTowerFloor: 12 }).activeEventIds).not.toContain('galarian-legendary-flyers');
-    expect(resolveWorldTeam(base, { ...getMeta(), seasonYear: 6, bestTowerFloor: 1 }).name).toBe('The Legendary Flyers');
+    expect(resolveWorldTeam(base, { ...getMeta(), seasonYear: 6, bestTowerFloor: 1 }).name).toBe('The Legendary Birds');
   });
 
   it('derives save-wide progression facts without requiring the current run to contain those wins', () => {

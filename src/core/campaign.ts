@@ -5,7 +5,7 @@
  *   - 3 regular teams, fought in any order, each once per run.
  *   - The champion is always available and is the finale; beating it ends the run (victory).
  *   - Matches are first-to-3: no ties — every match is a win or a loss.
- *   - Losing a match ends the run unless the permanent Second Chance Charm grants one rematch.
+ *   - Losing a match ends the run unless the permanent Max Revive grants one rematch.
  *   - After beating a regular team you may poach 1 of its players (swap: take 1,
  *     drop 1 of your own, same side — field or goalie). The taken player swaps
  *     into the dropped player's slot. The champion grants no poach.
@@ -16,6 +16,8 @@ import { BASE_LEVEL, CHAMPION_LEVEL, LEVEL_PER_WIN } from '../config/campaign';
 import { ALL_TEAMS, CAMPAIGN_TEAMS, CHAMPION_TEAM, USER_TEAM, type PlayerDef, type Team } from '../config/teams';
 import { STARTER_EVOLUTIONS, TOWER_STAGES, ZONES } from '../config/progression';
 import type { BaseStats } from './stats';
+import { arceusAvailable } from './storyCampaign';
+import { bracketOpponent } from './tournament';
 import { getMeta } from '../state/metaStore';
 import { applyPermanentSpeciesEvolutionToTeam } from './permanentItems';
 import { resolveWorldTeam, resolveWorldZone } from './worldState';
@@ -51,7 +53,7 @@ export interface CampaignState {
   matchInProgress?: string;
   /** A just-beaten regular team whose player hasn't been taken (or skipped) yet. */
   pendingPoach?: string;
-  /** The permanent Second Chance Charm is only usable once in a run. */
+  /** The permanent Max Revive is only usable once in a run. */
   retryUsed?: boolean;
   /** Snapshot before the most recent match, used for a single rematch after defeat. */
   retrySnapshot?: {
@@ -126,7 +128,7 @@ export function startMatch(state: CampaignState, teamId: string, config: MatchRe
   const zone = resolveWorldZone(getMeta().activeIslandId || getMeta().selectedZoneId);
   const islandTeamIds = zone ? [...zone.opponents, zone.bossId] : [];
   const isSelectedIslandAvailable = islandTeamIds.includes(teamId) && !state.results[teamId] && !state.gameOver && !state.victory;
-  const isTournamentStageAvailable = getMeta().daysRemaining <= 0 && TOWER_STAGES.some(stage => stage.opponentId === teamId) && !state.gameOver && !state.victory;
+  const isTournamentStageAvailable = ((getMeta().daysRemaining <= 0 && (getMeta().bracket ? bracketOpponent(getMeta().bracket!) === teamId : TOWER_STAGES.some(stage => stage.opponentId === teamId))) || (teamId === 'story-arceus' && arceusAvailable(getMeta().story, getMeta().seasonYear))) && !state.gameOver && !state.victory;
   if (!isLegacyAvailable && !isSelectedIslandAvailable && !isTournamentStageAvailable) throw new Error(`Team ${teamId} is not available`);
   if (state.matchInProgress === teamId) return state;
   const inferredTournament = config.tournament ?? isTournamentStageAvailable;
@@ -170,6 +172,7 @@ export function retryLastMatch(state: CampaignState): CampaignState {
 
 /** Treat a match that was started but never finished as a forfeit (a loss; the run is over). */
 export function abandonMatch(state: CampaignState): CampaignState {
+  if (state.matchInProgress && state.retrySnapshot?.tournament) return { ...state, matchInProgress: undefined, gameOver: true };
   return state.matchInProgress ? recordResult(state, state.matchInProgress, 'loss') : state;
 }
 

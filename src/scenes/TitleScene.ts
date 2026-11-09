@@ -4,34 +4,39 @@ import { addRetroChrome, addRetroPanel } from '../ui/chrome';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/rink';
 import { CAMPAIGN_TEAMS } from '../config/teams';
 import { difficultyLevel, startMatch } from '../core/campaign';
-import { clearRunSave, getRun, hasSavedRun, resetRun, setRun, takeNotice } from '../state/runStore';
+import { getRun, hasSavedRun, resetRun, setRun, takeNotice } from '../state/runStore';
 import { Menu, MenuButton } from '../ui/menu';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
-import { addRun, beginNewYear, getMeta, resetMetaState, type StarterId } from '../state/metaStore';
+import { addRun, beginNewYear, getMeta, type StarterId } from '../state/metaStore';
 import { yearEndReflection, yearOpening } from '../config/story';
 import { STARTER_EVOLUTIONS } from '../config/progression';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { beginCareerRun, clearCareerStats } from '../state/careerStatsStore';
+import { beginCareerRun } from '../state/careerStatsStore';
+import { needsFirstRunIntro } from '../state/onboarding';
+import { getAchievements } from '../state/achievementsStore';
+import { wipeSaveData } from '../state/resetSaveData';
+import { ACHIEVEMENTS } from '../config/achievements';
+import { addTrophy } from '../ui/trophy';
 
 const TEAM_PARAM = 'team';
 
 const HELP_LINES = [
   ['MOVE', 'ARROWS / WASD'],
   ['PASS · SWITCH', 'SPACE'],
-  ['SHOOT', 'HOLD SHIFT — aim UP/DOWN, release on the white ring'],
+  ['SHOOT', 'HOLD SHIFT — aim UP/DOWN, release when the gold ring pulses'],
   ['SKILL MOVES', 'E SPIN · F DEKE: fake low, cut high'],
-  ['PARRY', "defending: press the ATTACKER'S key on the white ring, from in front"],
+  ['PARRY', "defending: match the ATTACKER'S key when its ring pulses, from in front"],
   ['CHECK', 'SHIFT defending: bumps a walker; BEFORE a juke = a wall'],
   ['PRESSURE', 'a defender on you strips the puck: pass, shoot or juke'],
   ['GOALIE', 'juke near the net: if it bites, shoot the OPEN side'],
-  ['ONE-TIMER', 'SPACE as a pass arrives, then release'],
+  ['ONE-TIMER', 'press SHIFT as a pass arrives; UP/DOWN chooses the corner'],
   ['PAUSE', 'ESC'],
   ['', ''],
   ['RULES', 'first to 3 goals wins'],
   ['WIN', 'poach 1 player from the beaten team (swap: take 1, drop 1)'],
-  ['LOSE', 'the run ends; Second Chance Charm grants one rematch per run'],
-  ['GOAL', 'beat all 3 teams, then take the champion'],
+  ['LOSE', 'the run ends; Max Revive grants one rematch per run'],
+  ['GOAL', 'recruit partners, clear island bosses, and climb the Battle Tower'],
 ];
 
 export class TitleScene extends Phaser.Scene {
@@ -45,7 +50,7 @@ export class TitleScene extends Phaser.Scene {
     super('TitleScene');
   }
 
-  create(data?: { advanceYearAfterReflection?: boolean }): void {
+  create(data?: { advanceYearAfterReflection?: boolean; showHelp?: boolean }): void {
     wireShutdown(this);
     if (data?.advanceYearAfterReflection) { this.beginNextYear(); return; }
     this.bobbers = [];
@@ -92,7 +97,7 @@ export class TitleScene extends Phaser.Scene {
     const primaryPlate = this.add.rectangle(890, 150, 356, 56, FILL.plateHi).setStrokeStyle(1, THEME.GREEN);
     this.add.rectangle(890, 194, 356, 1, 0x34465a);
     this.add.rectangle(890, 508, 356, 1, 0x34465a);
-    this.add.text(348, 488, hasPlayed ? `YEAR ${meta.seasonYear}  /  ${meta.daysRemaining} DAYS LEFT  /  ${meta.currency} CREDITS` : 'BUILD A TEAM. CONQUER THE ISLANDS.', { fontFamily: FONT, fontSize: '12px', color: hex(THEME.BLUE) }).setOrigin(.5);
+    this.add.text(348, 488, hasPlayed ? `YEAR ${meta.seasonYear}  /  ${meta.daysRemaining} DAYS LEFT  /  ${meta.currency} BP` : 'BUILD A TEAM. CONQUER THE ISLANDS.', { fontFamily: FONT, fontSize: '12px', color: hex(THEME.BLUE) }).setOrigin(.5);
     this.add.text(890, 584, '↑ / ↓ SELECT   ·   ENTER CONFIRM', { fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM) }).setOrigin(.5);
     const primaryBtn = new MenuButton(this, 890, 150, newGame ? 'NEW GAME' : 'CONTINUE', {
       color: THEME.GREEN,
@@ -102,7 +107,9 @@ export class TitleScene extends Phaser.Scene {
           this.scene.start('StarterSelectScene');
           return;
         }
+        if (current.story.settledYear === current.seasonYear && current.towerFloor >= 4) { this.scene.start('VictoryScene'); return; }
         if (hasSavedRun()) {
+          if (needsFirstRunIntro()) { this.scene.start('TrainingMenuScene', { onboarding: true }); return; }
           this.scene.start('ZoneSelectScene');
           return;
         }
@@ -117,9 +124,9 @@ export class TitleScene extends Phaser.Scene {
       },
     });
     primaryPlate.setInteractive({ useHandCursor: true }).on('pointerdown', () => primaryBtn.onSelect?.());
-    const howBtn = new MenuButton(this, 890, 228, 'HOW TO PLAY', {
+    const howBtn = new MenuButton(this, 890, 228, 'TRAINING RINK', {
       size: 20,
-      onSelect: () => this.setHelp(!this.help),
+      onSelect: () => this.scene.start('TrainingMenuScene'),
     });
     const statsBtn = new MenuButton(this, 890, 280, 'STATS GUIDE' , {
       size: 20,
@@ -136,12 +143,19 @@ export class TitleScene extends Phaser.Scene {
       color: THEME.BLUE,
       onSelect: () => this.scene.start('CareerStatsScene', { returnTo: 'TitleScene' }),
     });
-    const shopBtn = new MenuButton(this, 890, 436, 'ITEM SHOP', {
+    const shopBtn = new MenuButton(this, 890, 436, 'POKÉ MART', {
       size: 20,
       color: THEME.GOLD,
       onSelect: () => this.scene.start('StoreScene', { returnTo: 'TitleScene' }),
     });
-    const buttons: MenuButton[] = [primaryBtn, howBtn, statsBtn, labBtn, careerStatsBtn, shopBtn];
+    const earnedCount = ACHIEVEMENTS.filter(a => getAchievements().earned[a.id]).length;
+    addRetroPanel(this, 348, 568, 508, 90, THEME.GOLD, FILL.panel);
+    addTrophy(this, 146, 564).setScale(.7);
+    const achievementsBtn = new MenuButton(this, 368, 555, 'ACHIEVEMENTS', {
+      size: 20, color: THEME.GOLD, onSelect: () => this.scene.start('AchievementsScene'),
+    });
+    this.add.text(368, 584, `${earnedCount} / ${ACHIEVEMENTS.length} TROPHIES · YOURS FOREVER`, { fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM) }).setOrigin(.5);
+    const buttons: MenuButton[] = [primaryBtn, howBtn, statsBtn, labBtn, careerStatsBtn, shopBtn, achievementsBtn];
     if (hasPlayed) {
       buttons.push(new MenuButton(this, 890, 546, 'WIPE ALL DATA', {
         color: THEME.RED,
@@ -179,27 +193,20 @@ export class TitleScene extends Phaser.Scene {
     // Dev deep-link: ?team=<teamId> skips straight into a match with a fresh run.
     const teamId = new URLSearchParams(window.location.search).get(TEAM_PARAM);
     if (teamId && CAMPAIGN_TEAMS.some((t) => t.id === teamId)) this.launchMatch(teamId);
+    else if (data?.showHelp) this.setHelp(true);
   }
 
   private confirmWipe(): void {
     if (this.resetDialog) return;
     this.resetDialog = new ConfirmDialog(
       this,
-      'WIPE ALL SAVE DATA?',
-      'This permanently deletes your starter, years, currency, island resources, unlocks, current run, and Balance Lab history. This cannot be undone.',
-      'WIPE EVERYTHING',
+      'WIPE SAVE DATA?',
+      'This permanently deletes your starter, years, currency, island resources, unlocks, career stats, current run, and Balance Lab history. Achievements and achievement progress stay yours forever. This cannot be undone.',
+      'WIPE SAVE DATA',
       () => {
         this.resetDialog?.destroy();
         this.resetDialog = null;
-        resetMetaState();
-        clearRunSave();
-        clearCareerStats();
-        try {
-          for (let i = localStorage.length - 1; i >= 0; i--) {
-            const key = localStorage.key(i);
-            if (key?.startsWith('ice-pokey:')) localStorage.removeItem(key);
-          }
-        } catch { /* storage may be unavailable */ }
+        wipeSaveData();
         this.scene.restart();
       },
       () => {
@@ -265,8 +272,8 @@ export class TitleScene extends Phaser.Scene {
   }
 
   private beginNextYear(): void {
-    resetRun();
     beginNewYear();
+    resetRun();
     addRun();
     const freshRun = getRun();
     beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));

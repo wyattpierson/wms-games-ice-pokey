@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import {
+  BANK_PASS_SPEED_MULT, BANK_PASS_RETAIN, PUCK_RADIUS, PASS_PLUS_MULT, CHECK_PLUS_PRESSURE_MULT, CHECK_PLUS_STAGGER_MULT, GIVE_GO_TIME,
   AI_SPEED_FACTOR, AIM_SLIDE_SPEED, CHARGE_SKATE, CHECK_BUMP_BASE, CHECK_BUMP_PER_DEF, CHECK_COOLDOWN_BASE,
   CHECK_COOLDOWN_PER_DEF, CHECK_DAMAGE_BASE, CHECK_DAMAGE_PER_DEF, CHECK_HIT_REACH, CHECK_PREPLANT_GRACE,
   CHECK_PRESSURE_BASE, CHECK_PRESSURE_PER_DEF, CHECK_RUNIN_MIN, CHECK_STAGGER_BASE, CHECK_STAGGER_PER_DEF,
-  CHECK_TIME, DOWN_TIME, HP_REGEN_DELAY, GOALIE_FOOL_MIN_CHARGE, GOALIE_FOOL_RANGE, GOALIE_FOOL_TIME,
+  CHECK_TIME, DOWN_TIME, HP_REGEN_DELAY, GOALIE_FOOL_RANGE, GOALIE_FOOL_TIME,
   GOALIE_POKE_RANGE, PRESSURE_LOCKOUT, PRESSURE_RANGE, PRESSURE_STRIP_SPEED,
   ONE_TIMER_GRACE, ONE_TIMER_LEAD, ONE_TIMER_MULT, ONE_TIMER_RING_TIME, PARRY_CONE_HALF, SHOT_RANGE, COUNTER_BURST,
   DROP_TIME, GOALIE_SAVE_COOLDOWN, GOALIE_SAVE_DEFLECT_SPEED,
@@ -18,12 +19,13 @@ import { OPPONENTS, USER_TEAM, type Team } from '../config/teams';
 import { abandonMatch } from '../core/campaign';
 import { canRetryBalanceLabLoss } from '../core/balanceLabItems';
 import { add, clamp, dist, dot, len, norm, scale, sub, v, type Vec2 } from '../core/vec2';
+import { bankPassRoute } from '../core/passing';
 import { aimTargetY, chargeFromHold, isSuperShotHold, perfectWindowHold, superShotWindowHold, shotDirection } from '../core/shot';
 import {
   ALL_MOVES, dashHeading, dashSpeedAt, inFrontCone, dekeAxis, lateralSignY, MOVE_DEFS, parryTiming, verticalFromStick,
   windowSeconds, type MoveId,
 } from '../core/moves';
-import { respectAfterFool } from '../core/goalie';
+import { segmentCircleContact, saveEncounterChance, respectAfterFool } from '../core/goalie';
 import { stepPressure, type Presser } from '../core/pressure';
 import { deriveStats, type HockeyStats } from '../core/stats';
 import { nearestThreat, stepAI, type AIWorld } from '../gameplay/ai';
@@ -41,12 +43,17 @@ import { ITEM_IDS, STARTER_EVOLUTIONS } from '../config/progression';
 import { getMeta, type StarterId } from '../state/metaStore';
 import { isStarterAtFinalEvolution, MEGA_STARTER_FORMS } from '../core/permanentItems';
 import type { BalanceMatchSummary } from '../core/balanceLab';
+import { ContextCoach } from '../core/coach';
+import { ONBOARDING, INTRO_DRILLS, type PracticeConfig } from '../config/training';
+import { setStoryFlag } from '../state/metaStore';
+import { TrainingSession } from '../gameplay/training';
 
 type MatchState = 'drop' | 'live' | 'goal' | 'over';
 
 /** Legacy dev data (pre-campaign): pick an opponent by index. */
 interface GameData {
   opponentIndex?: number;
+  practice?: PracticeConfig;
 }
 
 /** Campaign data: an explicit roster, opponent and run-driven AI level. */
@@ -107,9 +114,25 @@ export class GameScene extends Phaser.Scene {
   private megaOriginal: { player: Player; name: string; sprite: number; stats: HockeyStats } | null = null;
   /** A match may activate Mega Evolution once. A goal reverts the form but does not refund the use. */
   private megaUsedThisMatch = false;
+  private practiceConfig: PracticeConfig | null = null;
+  private practice: TrainingSession | null = null;
+  private coach: ContextCoach | null = null;
+  private coachText: Phaser.GameObjects.Text | null = null;
+  private coachPanel: Phaser.GameObjects.Rectangle | null = null;
+  private footer!: Phaser.GameObjects.Text;
 
   init(data?: MatchConfig | GameData): void {
     this.resetMatchState();
+    if (data && 'practice' in data && data.practice) {
+      this.practiceConfig = data.practice;
+      // Teach with the chosen partner first, without changing the saved lineup.
+      const team = getRun().userTeam;
+      this.userTeam = { ...team, players: [...team.players].sort((a, b) =>
+        Number(!!a.goalie) - Number(!!b.goalie) || Number(!!b.isStarter) - Number(!!a.isStarter)) as Team['players'] };
+      this.oppTeam = OPPONENTS[0];
+      this.diff = difficultyAt(0);
+      return;
+    }
     if (data && 'userTeam' in data) {
       // Campaign match: explicit roster, opponent and AI level.
       const c = data as MatchConfig;
@@ -146,6 +169,11 @@ export class GameScene extends Phaser.Scene {
     this.clock = 0;
     this.trailTick = 0;
     this.controlled = null;
+    this.practiceConfig = null;
+    this.practice = null;
+    this.coach = null;
+    this.coachText = null;
+    this.coachPanel = null;
     this.manualPick = null;
     this.oneTimerArmed = null;
     this.pauseOverlay = null;
@@ -201,9 +229,9 @@ export class GameScene extends Phaser.Scene {
       label.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.activateMegaEvolution());
       this.megaHud = { bg, label };
     }
-    this.add
+    this.footer = this.add
       .text(CENTER_X, GAME_HEIGHT - 12,
-        'Arrows move · SPACE pass / switch · SHIFT = shoot / check · E / F = Juke / Counter · ' +
+        'Arrows move · SPACE pass / switch · B bank pass (TM U-turn) · SHIFT shoot / check · E / F juke / counter · ' +
           (this.campaign ? 'ESC pause' : this.testMode ? 'ENTER results / retry' : 'R restart'),
         {
           fontFamily: 'monospace',
@@ -238,6 +266,14 @@ export class GameScene extends Phaser.Scene {
       if (this.pauseOverlay.visible) this.pauseOverlay.handleEscape();
       else this.pauseOverlay.show();
     });
+    this.input.keyboard!.on('keydown-H', () => {
+      if (!this.coach) return;
+      setStoryFlag(ONBOARDING.hintsOff);
+      this.coach = null;
+      this.coachText?.setVisible(false);
+      this.coachPanel?.setVisible(false);
+      this.footer.setVisible(true);
+    });
     if (this.campaign || this.testMode) {
       this.pauseOverlay = new PauseOverlay(
         this,
@@ -256,11 +292,49 @@ export class GameScene extends Phaser.Scene {
     this.pressG = this.add.graphics().setDepth(14);
     this.updateScoreText(); // show 0 — 0 at kickoff (it used to stay blank until the first goal)
     this.setState('drop');
+    if (this.practiceConfig) {
+      this.scoreText.setVisible(false);
+      this.footer.setVisible(false);
+      this.state = 'live';
+      this.practice = new TrainingSession(this, this.practiceConfig, {
+        players: this.players, puck: this.puck,
+        reset: () => this.resetPositions(),
+        control: player => {
+          this.controlled?.setControlled(false);
+          this.controlled = player;
+          player.setControlled(true);
+          this.manualPick = player;
+        },
+        grant: player => this.grantPuck(player),
+        pass: (from, to) => this.doPass(from, to),
+        clearInput: () => this.controls.clearEdges(),
+        next: () => this.nextPractice(),
+        exit: () => this.scene.start('TrainingMenuScene', this.practiceConfig?.onboarding ? { startFirstMatch: true } : {}),
+      });
+    } else if (this.campaign) {
+      const meta = getMeta();
+      if (meta.seasonYear === 1 && meta.totalRuns <= 1 && meta.totalMatches === 0
+        && meta.flags.includes(ONBOARDING.firstMatchStarted) && !meta.flags.includes(ONBOARDING.firstMatchDone)
+        && !meta.flags.includes(ONBOARDING.hintsOff)) {
+        this.coach = new ContextCoach(meta.flags.filter(f => f.startsWith('tutorial-hint-')).map(f => f.slice(14)), id => setStoryFlag(`tutorial-hint-${id}`));
+        this.coachPanel = this.add.rectangle(CENTER_X, GAME_HEIGHT - 31, GAME_WIDTH - 30, 48, 0x0e1d2d, 1).setStrokeStyle(1, 0x75bde0).setDepth(100);
+        this.coachText = this.add.text(CENTER_X, GAME_HEIGHT - 32, '', { fontFamily: 'monospace', fontSize: '12px', color: '#f4f1de', align: 'center', wordWrap: { width: GAME_WIDTH - 90 } }).setOrigin(.5).setDepth(101);
+        this.coachPanel.setVisible(false);
+      }
+    }
   }
 
   update(time: number, dtMs: number): void {
     if (this.pauseOverlay?.visible) return; // paused: freeze the match
     const dt = Math.min(dtMs / 1000, 0.05);
+    if (this.practice) {
+      this.practice.before(dt);
+      if (!this.practice.blocked && !this.practice.settling) {
+        this.updateLive(time, dt);
+        this.practice.after();
+      }
+      return;
+    }
 
     if (this.state === 'drop') {
       this.stateTimer -= dt;
@@ -287,6 +361,37 @@ export class GameScene extends Phaser.Scene {
     if (this.state === 'over') return;
 
     this.updateLive(time, dt);
+    this.updateCoach(dt);
+  }
+
+  private updateCoach(dt: number): void {
+    if (!this.coach || !this.controlled) return;
+    if (this.state !== 'live') {
+      this.coachPanel?.setVisible(false);
+      this.coachText?.setVisible(false);
+      this.footer.setVisible(true);
+      return;
+    }
+    const c = this.controlled;
+    const enemy = this.puck.carriedBy?.team === 1 ? this.puck.carriedBy : null;
+    const move = enemy?.move;
+    const hint = this.coach.update({
+      carrying: c.carrying, charging: c.charging, pressure: c.pressure,
+      incomingPass: !!this.incomingPass(c),
+      enemyMove: enemy && enemy.moveT < enemy.tellDur && dist(c.pos, enemy.pos) <= PARRY_RANGE + 30 && (move === 'spin' || move === 'deke') ? move : null,
+      closeCarrier: !!enemy && dist(c.pos, enemy.pos) < 110,
+    }, dt);
+    this.coachPanel?.setVisible(!!hint);
+    this.coachText?.setVisible(!!hint).setText(hint ? `${hint.text}\nH: turn off first-match hints  ·  ESC: pause / controls` : '');
+    this.footer.setVisible(!hint);
+  }
+
+  private nextPractice(): void {
+    const config = this.practiceConfig;
+    if (!config?.onboarding) { this.scene.start('TrainingMenuScene'); return; }
+    const next = INTRO_DRILLS[INTRO_DRILLS.indexOf(config.drill) + 1];
+    if (next) this.scene.restart({ practice: { drill: next, onboarding: true } });
+    else this.scene.start('TrainingMenuScene', { startFirstMatch: true });
   }
 
   // ---------- live play ----------
@@ -324,10 +429,11 @@ export class GameScene extends Phaser.Scene {
     if (this.controlled) {
       const c = this.controlled;
       const dir = this.controls.direction();
-      const committed = !!c.move && !c.moveResolved; // winding up a juke
+      const committed = !!c.move; // finish the juke before winding up a shot
+      if (!this.controls.held('shoot')) c.shotInterrupted = false;
       // Charging a shot locks you onto the goal: Up/Down slides the aim along the
       // goal mouth instead of skating you up/down; Left/Right still skate (slower).
-      const wantsCharge = c.carrying && this.controls.held('shoot') && !committed && c.stagger <= 0;
+      const wantsCharge = c.carrying && this.controls.held('shoot') && !committed && !c.shotInterrupted && c.stagger <= 0;
       // Same lock once a one-timer is ARMED: Up/Down picks the corner instead of skating you off the pass.
       const armedOneTimer = this.oneTimerArmed?.player === c && !c.carrying;
       let moveDir = dir;
@@ -355,13 +461,17 @@ export class GameScene extends Phaser.Scene {
       } else if (moveDir.x || moveDir.y) c.applyInput(moveDir, dt, moveFactor);
       else c.coast(dt);
 
-      if (c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE && !committed && this.controls.justPressed('shoot')) {
+      if (c.carrying && c.stagger <= 0 && !c.shotInterrupted && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE && !committed && this.controls.justPressed('shoot')) {
         // ONE-TIMER (press just after catching the pass): fires instantly, aimed by the held Up/Down.
         this.fireOneTimer(c, clamp(dir.y, -1, 1));
       } else if (c.carrying) {
         // Offense: pass, charge-shot (release inside the window = perfect), juke (E/F).
-        if (this.controls.justPressed('pass') && !committed) this.userPass(c);
-        if (wantsCharge) {
+        if (this.controls.justPressed('pass') && !committed && c.stagger <= 0) this.userPass(c);
+        else if (this.controls.justPressed('bankPass') && !committed && c.stagger <= 0) {
+          if (this.hasItem(ITEM_IDS.wallPass)) this.userPass(c, true);
+          else this.popup('TM U-TURN NEEDED', c.pos, '#9ad1ff', 16);
+        }
+        if (wantsCharge && c.carrying) {
           if (!c.charging) {
             c.charging = true;
             c.holdT = 0;
@@ -377,7 +487,7 @@ export class GameScene extends Phaser.Scene {
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
           c.facing += diff * Math.min(1, dt * 14);
-        } else if (c.charging || c.charge > 0) {
+        } else if ((c.charging || c.charge > 0) && !c.shotInterrupted && c.stagger <= 0 && c.carrying) {
           this.shootPuck(c, c.aimY, c.charge);
           c.charging = false;
           c.charge = 0;
@@ -427,7 +537,8 @@ export class GameScene extends Phaser.Scene {
       // One-timer cue on the RECEIVER: a ring shrinks as the pass arrives; white = shoot now.
       const ringOpen = 1 - ONE_TIMER_LEAD / ONE_TIMER_RING_TIME;
       const inc2 = c.carrying ? null : this.incomingPass(c);
-      if (inc2) {
+      const teachPassingOnly = this.practiceConfig?.drill === 'pass' || this.practiceConfig?.drill === 'pressure';
+      if (inc2 && !teachPassingOnly) {
         c.shotCue = {
           progress: clamp(1 - inc2.eta / ONE_TIMER_RING_TIME, 0, 1),
           openAt: ringOpen,
@@ -435,10 +546,11 @@ export class GameScene extends Phaser.Scene {
           label: 'ONE-TIMER!',
           color: 0x7bdff2,
         };
-      } else if (c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE) {
+      } else if (!teachPassingOnly && c.carrying && c.receivedByPass && c.sinceReceive <= ONE_TIMER_GRACE) {
         c.shotCue = { progress: 1, openAt: ringOpen, inWindow: true, label: 'ONE-TIMER!', color: 0x7bdff2 };
       }
-      this.drawAim(c, dir.y);
+      if (teachPassingOnly) this.aimG.clear();
+      else this.drawAim(c, dir.y);
     } else {
       this.aimG.clear();
       for (const p of this.players) p.shotCue = null;
@@ -507,7 +619,10 @@ export class GameScene extends Phaser.Scene {
       // Difficulty slows opposing SKATERS; goalies keep (nearly) full speed — a slowed goalie just gives the net away.
       p.speedScale = p.isGoalie ? (p.team === 1 ? this.diff.aiGoalieSpeed : 1) : p.team === 1 ? this.diff.aiSpeed : AI_SPEED_FACTOR;
       p.powerSpeedScale = this.powerRuntime.statMultiplier(this.actorKey(p), 'speed', this.clock);
-      if (p !== this.controlled) stepAI(p, world);
+      if (p !== this.controlled) {
+        if (this.practice) this.practice.steer(p, dt);
+        else stepAI(p, world);
+      }
       p.update(dt, this.puck.pos);
     }
 
@@ -535,11 +650,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     // 4. Puck: physics, pickups, goalie saves, body separation.
-    this.puck.update(dt);
+    this.puck.update(dt, (start, end) => this.goalieSaves(start, end));
     this.puckHist.push({ t: this.clock, pos: v(this.puck.pos.x, this.puck.pos.y) });
     while (this.puckHist.length > 2 && this.puckHist[0].t < this.clock - 0.8) this.puckHist.shift();
     this.tryPickup();
-    this.goalieSaves();
     this.applyGuards();
     this.separate();
     this.updatePressure(dt);
@@ -596,6 +710,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Pressure maxed out: the puck pops off the blade toward the presser, who gets first touch. */
   private stripPuck(carrier: Player, presser: Player): void {
+    this.practice?.event({ kind: 'stripped', actor: carrier });
     const dir = norm(sub(presser.pos, carrier.pos));
     this.puck.launch(dir, PRESSURE_STRIP_SPEED, carrier);
     carrier.pickupCooldown = Math.max(carrier.pickupCooldown, PRESSURE_LOCKOUT);
@@ -638,6 +753,9 @@ export class GameScene extends Phaser.Scene {
     let bd = Infinity;
     for (const p of this.players) {
       if (p.down || p.pickupCooldown > 0) continue;
+      // Incoming shots are resolved once by the swept goalie-save system.
+      if (p.isGoalie && len(this.puck.vel) >= 140 && this.puck.lastTaker?.team !== p.team
+        && Math.sign((p.team === 0 ? ICE_X : ICE_X + RINK_W) - this.puck.pos.x) === Math.sign(this.puck.vel.x)) continue;
       const reach = p.isGoalie ? PICKUP_RADIUS + 6 : PICKUP_RADIUS;
       const d = dist(p.pos, this.puck.pos);
       if (d <= reach && d < bd) {
@@ -652,8 +770,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const sp = len(this.puck.vel);
-    if (sp < FAST_PUCK_SPEED) {
-      // Slow puck: it's yours.
+    if (sp < FAST_PUCK_SPEED || (this.puck.pass?.to === best && best.stagger <= 0)) {
+      // Slow puck or a ready intended receiver: secure the catch.
       this.grantPuck(best);
       return;
     }
@@ -670,6 +788,8 @@ export class GameScene extends Phaser.Scene {
     const pass = this.puck.pass;
     const viaPass = !!pass && pass.to === p && pass.from.team === p.team;
     this.puck.give(p);
+    p.giveGoT = 0;
+    p.giveGoTarget = null;
     this.puck.lastPasser = viaPass ? pass!.from : null;
     p.pressure = 0;
     p.pressers = [];
@@ -681,10 +801,26 @@ export class GameScene extends Phaser.Scene {
     const armed = this.oneTimerArmed;
     if (armed && armed.player !== p) this.oneTimerArmed = null; // someone else got it
     if (!viaPass) return;
+    p.receiveAnim = 0.16;
+    this.practice?.event({ kind: 'catch', actor: p });
+    const passer = pass!.from;
+    if (passer.team === 0) this.emitPowerEvent('passComplete', passer);
+    if (!passer.isGoalie && !passer.down) {
+      const forward = passer.team === 0 ? 1 : -1;
+      const candidates = [-1, 1].map(side => v(
+        clamp(passer.pos.x + forward * 150, ICE_X + 65, ICE_X + RINK_W - 65),
+        clamp(passer.pos.y + side * 100, ICE_Y + 50, ICE_Y + RINK_H - 50),
+      ));
+      const clearance = (spot: Vec2) => Math.min(...this.players
+        .filter(other => other !== passer && !other.down)
+        .map(other => dist(spot, other.pos)));
+      passer.giveGoTarget = candidates.sort((a, b) => clearance(b) - clearance(a))[0];
+      passer.giveGoT = GIVE_GO_TIME;
+    }
     if (armed && armed.player === p && this.clock <= armed.until) {
       // The shot leaves the instant the puck touches the blade.
       this.fireOneTimer(p, p === this.controlled ? clamp(this.controls.direction().y, -1, 1) : 0);
-    } else if (p !== this.controlled && !p.isGoalie) {
+    } else if (!this.practice && p !== this.controlled && !p.isGoalie) {
       // AI receivers one-time it sometimes, if they're in range.
       const goalX = p.team === 0 ? ICE_X + RINK_W : ICE_X;
       if (Math.abs(p.pos.x - goalX) < SHOT_RANGE + 80 && Math.random() < this.diff.aiOneTimerRate) {
@@ -693,27 +829,30 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private goalieSaves(): void {
-    if (this.puck.state !== 'loose') return;
+  /** One roll per launch, using the whole path before goal-line detection. */
+  private goalieSaves(start: Vec2, end: Vec2): boolean {
     const sp = len(this.puck.vel);
-    if (sp < 140) return;
+    if (sp < 140) return false;
     for (const g of this.players) {
-      if (!g.isGoalie || g.saveCooldown > 0) continue;
-      const d = dist(g.pos, this.puck.pos);
-      if (d > GOALIE_SAVE_RADIUS) continue;
+      if (!g.isGoalie || g.down || g.saveCooldown > 0 || g.saveAttemptSeq === this.puck.launchSeq) continue;
+      if (this.puck.lastTaker?.team === g.team) continue;
       const goalX = g.team === 0 ? ICE_X : ICE_X + RINK_W;
-      if (Math.sign(goalX - this.puck.pos.x) !== Math.sign(this.puck.vel.x)) continue;
-      // Stat-driven base save: SpD (puckSense) vs. shot speed.
-      const saveChance = 0.15 + 0.7 * g.stats.puckSense - 0.12 * (sp / SHOT_SPEED_MAX);
-      if (Math.random() > saveChance) continue; // shot beats the save
+      if (Math.sign(goalX - start.x) !== Math.sign(this.puck.vel.x)) continue;
+      const contact = segmentCircleContact(start, end, g.pos, GOALIE_SAVE_RADIUS);
+      if (contact === null) continue;
+      g.saveAttemptSeq = this.puck.launchSeq;
+      if (Math.random() > saveEncounterChance(g.stats.puckSense, sp, start, end, g.pos, GOALIE_SAVE_RADIUS)) continue;
+      this.puck.pos = add(start, scale(sub(end, start), contact));
       g.saveCooldown = GOALIE_SAVE_COOLDOWN;
       g.stickSwing = 0.3;
-      const out = norm(
-        v(CENTER_X - this.puck.pos.x, CENTER_Y - this.puck.pos.y + (Math.random() - 0.5) * 240),
-      );
+      const out = norm(v(CENTER_X - this.puck.pos.x, CENTER_Y - this.puck.pos.y + (Math.random() - 0.5) * 240));
       this.puck.vel = scale(out, GOALIE_SAVE_DEFLECT_SPEED);
-      g.pickupCooldown = 0.35; // beat before the breakout — user gets the pass
+      this.puck.quick = false;
+      this.puck.pass = null;
+      g.pickupCooldown = 0.35;
+      return true;
     }
+    return false;
   }
 
   private separate(): void {
@@ -767,7 +906,7 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- actions ----------
 
-  private userPass(c: Player): void {
+  private userPass(c: Player, bank = false): void {
     const dirIn = this.controls.direction();
     const aim = dirIn.x || dirIn.y ? dirIn : v(Math.cos(c.facing), Math.sin(c.facing));
     const mates = this.players.filter((p) => p.team === c.team && !p.isGoalie && !p.down && p !== c);
@@ -786,20 +925,40 @@ export class GameScene extends Phaser.Scene {
         best = m;
       }
     }
-    this.doPass(c, best);
+    this.doPass(c, best, bank ? (dirIn.y < -0.25 ? -1 : dirIn.y > 0.25 ? 1 : 0) : null);
   }
 
-  private doPass(from: Player, to: Player): void {
+  private doPass(from: Player, to: Player, board: -1 | 0 | 1 | null = null): void {
+    this.practice?.event({ kind: 'pass', actor: from });
+    if (board !== null && (from.team !== 0 || !this.hasItem(ITEM_IDS.wallPass))) return;
     if (from.team === 0) this.balanceMetrics.passes++;
     // Lead the pass: aim at where the receiver is skating, not where they are.
-    const speed = PASS_SPEED * from.stats.passPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'passPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'pass');
+    const speed = PASS_SPEED * (board !== null ? BANK_PASS_SPEED_MULT : 1) * (from.team === 0 && this.hasItem(ITEM_IDS.passPlus) ? PASS_PLUS_MULT : 1) * from.stats.passPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'passPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'pass');
     const d = dist(from.pos, to.pos);
     const flight = (d / speed) * 0.75;
     const lead = v(to.pos.x + to.vel.x * flight, to.pos.y + to.vel.y * flight);
-    this.puck.launch(norm(sub(lead, from.pos)), speed, from);
+    this.puck.pos = from.bladeTip();
+    let bank: Vec2 | undefined;
+    let direction = norm(sub(lead, this.puck.pos));
+    if (board !== null) {
+      this.puck.pos.y = clamp(this.puck.pos.y, ICE_Y + PUCK_RADIUS + 1, ICE_Y + RINK_H - PUCK_RADIUS - 1);
+      const top = ICE_Y + PUCK_RADIUS, bottom = ICE_Y + RINK_H - PUCK_RADIUS;
+      const wallY = board === -1 ? top : board === 1 ? bottom
+        : bankPassRoute(this.puck.pos, to.pos, top).distance <= bankPassRoute(this.puck.pos, to.pos, bottom).distance ? top : bottom;
+      const route = bankPassRoute(this.puck.pos, to.pos, wallY);
+      const eta = route.distance / (speed * BANK_PASS_RETAIN);
+      const target = v(clamp(to.pos.x + to.vel.x * eta * 0.75, ICE_X + 35, ICE_X + RINK_W - 35),
+        clamp(to.pos.y + to.vel.y * eta * 0.75, top + 30, bottom - 30));
+      const ledRoute = bankPassRoute(this.puck.pos, target, wallY);
+      bank = ledRoute.bounce;
+      direction = ledRoute.direction;
+      this.popup('BANK PASS', from.pos, '#7bdff2', 18);
+    }
+    from.animateRelease('pass');
+    from.charging = false; from.charge = 0; from.holdT = 0; from.aiShotAim = null;
+    this.puck.launch(direction, speed, from);
     this.puck.lastPasser = null; // only credit the pass if a teammate actually receives it
-    this.puck.pass = { from, to }; // in flight: lets the receiver time a one-timer
-    if (from.team === 0) this.emitPowerEvent('passComplete', from);
+    this.puck.pass = { from, to, bank }; // in flight: lets the receiver time a one-timer
     // Control follows the pass: you become the receiver (so you can one-time it).
     if (from.team === 0 && !to.isGoalie) this.manualPick = to;
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.25);
@@ -811,6 +970,7 @@ export class GameScene extends Phaser.Scene {
     if (!pa || pa.to !== c || this.puck.state !== 'loose') return null;
     const sp = len(this.puck.vel);
     if (sp < 120) return null;
+    if (pa.bank) return { eta: (dist(this.puck.pos, pa.bank) + dist(pa.bank, c.pos) / BANK_PASS_RETAIN) / sp };
     const to = sub(c.pos, this.puck.pos);
     if (dot(this.puck.vel, to) <= 0) return null; // already past / not heading at them
     return { eta: Math.max(0, (len(to) - PICKUP_RADIUS) / sp) };
@@ -828,37 +988,41 @@ export class GameScene extends Phaser.Scene {
    * beyond ±1 is wide — only the AI does that). See core/shot.ts.
    */
   private shootPuck(from: Player, aimY: number, charge: number, quick = false): void {
+    if (from.down || from.stagger > 0 || from.shotInterrupted || this.puck.carriedBy !== from) return;
+    const releaseHold = from.holdT;
+    from.aiShotAim = null;
     if (from.team === 0) this.balanceMetrics.shots++;
     const goalX = from.team === 0 ? ICE_X + RINK_W : ICE_X;
     // Aim from where the PUCK is (it sits on the blade, off to one side of the
     // player) — aiming from the player's centre put full-corner shots on the post.
-    const origin = this.puck.state === 'carried' && this.puck.carriedBy === from ? this.puck.pos : from.pos;
+    const origin = from.bladeTip();
+    this.puck.pos = origin;
+    from.animateRelease('shot');
     const aim = shotDirection(origin, goalX, aimY);
     // Perfect shot: release with charge in the perfect window (the goalie's
     // ring/flash is the tell) → bonus power and a “!” over the shooter.
-    // A goalie fooled by a juke can't read the next shot: it leaves as a snap shot (consumes the window).
+    // Fooling a goalie earns a positional opening, not free shot power or another reaction penalty.
     const eg = this.goalieOf(from.team === 0 ? 1 : 0);
     const fooled = !quick && !!eg && eg.fooledT > 0 && !eg.foolSpent;
     if (fooled && eg) {
       eg.foolSpent = true; // one shot per window…
-      eg.fooledT = Math.max(eg.fooledT, GOALIE_FOOL_TIME); // …and the goalie stays beaten until that shot has arrived
-      charge = Math.max(charge, GOALIE_FOOL_MIN_CHARGE);
+      // Shooting does not extend the goalie's recovery or grant free power.
     }
-    const perfect = !quick && !fooled && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
-    const superShot = this.hasItem(ITEM_IDS.superShot) && !quick && !fooled && from === this.controlled && isSuperShotHold(from.holdT);
+    const perfect = !quick && from === this.controlled && charge >= PERFECT_SHOT_CHARGE;
+    const superShot = this.hasItem(ITEM_IDS.superShot) && !quick && from === this.controlled && isSuperShotHold(from.holdT);
     const shotMultiplier = quick ? ONE_TIMER_MULT : superShot ? SUPER_SHOT_MULT : perfect ? PERFECT_SHOT_MULT : 1;
     const speed =
       (SHOT_SPEED_MIN + (SHOT_SPEED_MAX - SHOT_SPEED_MIN) * charge) *
       from.stats.shotPower * this.powerRuntime.statMultiplier(this.actorKey(from), 'shotPower', this.clock) * this.powerRuntime.consumeActionMultiplier(this.actorKey(from), 'shot') * shotMultiplier;
     this.puck.launch(aim, speed, from);
     if (from.team === 0) this.emitPowerEvent('shotTaken', from);
-    this.puck.quick = quick || fooled; // the goalie reads it late either way
-    from.stickSwing = 0.3;
+    this.puck.quick = quick; // only a one-timer gets the late-read bonus
+    this.practice?.event({ kind: 'shot', actor: from, charge, aimY, quick, hold: releaseHold });
     from.pickupCooldown = Math.max(from.pickupCooldown, 0.15);
     if (superShot) this.popup('SUPER SHOT!', from.pos, '#ffd166', 26);
     else if (perfect) this.popup('!', from.pos, '#ffffff');
     if (quick) this.popup('ONE-TIMER!', from.pos, '#7bdff2', 24);
-    if (fooled) this.popup('SNAP SHOT!', from.pos, '#ffd60a', 24);
+    if (fooled) this.popup('OPEN SHOT!', from.pos, '#ffd60a', 24);
   }
 
   // ---------- juke moves & defense (parry layer) ----------
@@ -903,6 +1067,7 @@ export class GameScene extends Phaser.Scene {
         : v(Math.cos(carrier.facing + Math.PI), Math.sin(carrier.facing + Math.PI));
       d.vel = scale(n, COUNTER_BURST);
       d.facing = Math.atan2(n.y, n.x);
+      this.practice?.event({ kind: 'parry', actor: d });
       this.popup('PARRY!', d.pos, '#66ff99', 26);
     } else {
       d.whiff();
@@ -917,12 +1082,13 @@ export class GameScene extends Phaser.Scene {
    * finishMove). The price is being rooted and a cooldown.
    */
   private doCheck(d: Player): void {
-    if (d.checkCd > 0 || d.stagger > 0 || d.guardT > 0 || d.down) return;
+    if (d.checkCd > 0 || d.checkRecovery > 0 || d.stagger > 0 || d.guardT > 0 || d.down) return;
     if (d.team === 0) this.balanceMetrics.checks++;
     d.checkCd = CHECK_COOLDOWN_BASE - CHECK_COOLDOWN_PER_DEF * d.stats.checkPower; // big checkers re-check sooner
     d.guardT = CHECK_TIME;
     d.guardStart = this.clock; // a juke is only stuffed by a check that was already up when its tell began
     d.stickSwing = 0.3;
+    this.iceSpray(d);
     d.vel = scale(d.vel, 0.3); // plant
     d.checkHit.clear();
     // The check also STRIKES anyone already in reach who isn't mid-move (a move is
@@ -945,15 +1111,21 @@ export class GameScene extends Phaser.Scene {
     const impact = clamp(0.6 + closing / 300, 0.6, 1.5);
     const mult = g.team === 1 ? this.diff.aiCheckDamage : 1;
     const cp = g.stats.checkPower * this.powerRuntime.statMultiplier(this.actorKey(g), 'checkPower', this.clock);
+    const enhanced = g.team === 0 && this.hasItem(ITEM_IDS.checkPlus);
     const dmg = (CHECK_DAMAGE_BASE + CHECK_DAMAGE_PER_DEF * cp) * impact * mult;
     // A BUMP (not a throw): stops the carrier's progress and stuns them, but leaves them in
     // pressure range — and adds pressure, so a clean check on a walker leads to a strip.
     if (g.team === 0) this.balanceMetrics.checkHits++;
     o.vel = scale(n, (CHECK_BUMP_BASE + CHECK_BUMP_PER_DEF * cp) * impact * (0.5 + 0.5 * mult));
-    o.stagger = Math.max(o.stagger, (CHECK_STAGGER_BASE + CHECK_STAGGER_PER_DEF * cp) * impact * mult);
-    if (o.carrying) o.pressure = Math.min(0.95, o.pressure + (CHECK_PRESSURE_BASE + CHECK_PRESSURE_PER_DEF * cp) * impact * mult);
+    o.stagger = Math.max(o.stagger, (CHECK_STAGGER_BASE + CHECK_STAGGER_PER_DEF * cp) * impact * mult * (enhanced ? CHECK_PLUS_STAGGER_MULT : 1));
+    if (o.carrying) o.pressure = Math.min(0.95, o.pressure + (CHECK_PRESSURE_BASE + CHECK_PRESSURE_PER_DEF * cp) * impact * mult * (enhanced ? CHECK_PLUS_PRESSURE_MULT : 1));
     o.tumble = TUMBLE_TIME * 0.6;
     o.guardT = 0;
+    if (o.charging) {
+      if (o === this.controlled) o.shotInterrupted = true;
+      this.popup('SHOT INTERRUPTED', o.pos, '#9ad1ff', 18);
+    }
+    o.aiShotAim = null;
     o.charging = false;
     o.charge = 0;
     o.holdT = 0;
@@ -961,6 +1133,7 @@ export class GameScene extends Phaser.Scene {
     this.popup(`-${Math.round(dmg)}`, o.pos, '#ff6b6b', 20);
     this.damage(o, dmg);
     if (g.team === 0) this.emitPowerEvent('checkHit', g);
+    this.practice?.event({ kind: 'check', actor: g });
   }
 
   private damage(o: Player, amount: number): void {
@@ -1009,6 +1182,7 @@ export class GameScene extends Phaser.Scene {
     const blocker = this.players.find((o) => inReach(o) && o.guardStart <= startedAt + CHECK_PREPLANT_GRACE);
     if (!blocker && this.players.some(inReach)) this.popup('SLIPPED PAST', p.pos, '#ffd166', 20);
     if (blocker) {
+      blocker.checkHit.add(p);
       p.vel = scale(p.vel, 0.15);
       p.stagger = Math.max(p.stagger, STUFF_STAGGER_BASE + STUFF_STAGGER_PER_DEF * blocker.stats.checkPower);
       p.tumble = TUMBLE_TIME;
@@ -1068,10 +1242,11 @@ export class GameScene extends Phaser.Scene {
     p.vel = scale(dir, dashSpeedAt(p.dashSpeed, 0));
     this.launchFx(p, id);
     if (p.team === 0) { this.balanceMetrics.jukes++; this.emitPowerEvent('moveLanded', p); }
+    this.practice?.event({ kind: 'juke', actor: p });
     if (eg && plan && answered && plan.stance === 'bite') {
       const side = lateralSignY(def, p.dashAim, p.moveSide);
       if (side !== 0) {
-        // FOOLED: it went for the fake. Slow, late to read, and your next shot is a snap shot.
+        // FOOLED: it went for the fake, then recovers toward the puck.
         eg.fooledT = GOALIE_FOOL_TIME;
         eg.foolSpent = false;
         eg.openSign = side;
@@ -1142,8 +1317,20 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Brief ice chips at a hard plant or juke launch. */
+  private iceSpray(p: Player): void {
+    for (let i = 0; i < 5; i++) {
+      const angle = p.facing + Math.PI + (i - 2) * 0.35;
+      const flake = this.add.circle(p.pos.x, p.pos.y + 8, 1.5, 0xd8f4ff, 0.65).setDepth(0.7);
+      this.tweens.add({ targets: flake, x: p.pos.x + Math.cos(angle) * 24,
+        y: p.pos.y + 8 + Math.sin(angle) * 24, alpha: 0, duration: 220,
+        onComplete: () => flake.destroy() });
+    }
+  }
+
   /** One-shot flash at the moment a move lands (matches the move's shape). */
   private launchFx(p: Player, id: MoveId): void {
+    this.iceSpray(p);
     const col = MOVE_DEFS[id].color;
     if (id === 'deke') {
       const d = this.add.rectangle(p.pos.x, p.pos.y, 26, 26, col, 0).setStrokeStyle(5, col, 0.95).setRotation(Math.PI / 4).setDepth(0.6);
@@ -1190,6 +1377,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Small floating popup ("!" for perfect shots, PARRY!, BLOCKED, TOO EARLY…). */
   private popup(text: string, at: Vec2, color: string, size = 30): void {
+    this.practice?.event({ kind: 'feedback', text });
     const t = this.add.text(at.x, at.y - 38, text, {
       fontFamily: 'monospace', fontSize: `${size}px`, fontStyle: 'bold', color,
       stroke: '#000000', strokeThickness: 4,
@@ -1200,6 +1388,7 @@ export class GameScene extends Phaser.Scene {
   // ---------- match flow ----------
 
   private onGoal(side: 0 | 1): void {
+    if (this.practice) { this.practice.event({ kind: 'goal', actor: this.puck.lastTaker ?? undefined }); return; }
     this.score[side] += 1;
     if (this.testMode) { if (side === 0) this.balanceMetrics.goalsFor++; else this.balanceMetrics.goalsAgainst++; }
     const shooter = this.puck.lastTaker && this.puck.lastTaker.team === side ? this.puck.lastTaker : null;
@@ -1216,6 +1405,11 @@ export class GameScene extends Phaser.Scene {
 
   private setState(s: MatchState): void {
     this.state = s;
+    if (s !== 'live' && this.coach) {
+      this.coachPanel?.setVisible(false);
+      this.coachText?.setVisible(false);
+      this.footer.setVisible(true);
+    }
     if (s === 'drop') {
       this.stateTimer = DROP_TIME;
       this.resetPositions();
@@ -1223,6 +1417,14 @@ export class GameScene extends Phaser.Scene {
       this.revertMegaForm();
       this.stateTimer = GOAL_PAUSE;
     } else if (s === 'over') {
+      if (this.campaign && getMeta().flags.includes(ONBOARDING.firstMatchStarted) && getMeta().totalMatches === 0) {
+        setStoryFlag(ONBOARDING.firstMatchDone);
+      }
+      if (this.coach) {
+        this.coachPanel?.setVisible(false);
+        this.coachText?.setVisible(false);
+        this.footer.setVisible(true);
+      }
       this.flash(this.score[0] > this.score[1] ? 'YOU WIN!' : 'YOU LOSE', true);
       const retryAvailable = this.canUseTestRetry();
       this.hintText.setText(this.testMode
@@ -1285,6 +1487,14 @@ export class GameScene extends Phaser.Scene {
       p.lastFooled = null;
       p.goaliePlan = { owner: null, seq: -1, stance: 'hold' };
       p.guardStart = -99;
+      p.checkRecovery = 0;
+      p.giveGoT = 0;
+      p.giveGoTarget = null;
+      p.shotInterrupted = false;
+      p.aiShotAim = null;
+      p.releaseAnim = 0;
+      p.receiveAnim = 0;
+      p.saveAttemptSeq = -1;
     }
     this.puckHist = [];
     this.oneTimerArmed = null;
@@ -1351,6 +1561,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    this.practice?.destroy();
+    this.practice = null;
     this.pauseOverlay?.destroy();
     this.pauseOverlay = null;
   }

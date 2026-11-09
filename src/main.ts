@@ -17,6 +17,19 @@ import { DialogueScene } from './scenes/DialogueScene';
 import { BalanceLabScene } from './scenes/BalanceLabScene';
 import { StatsGuideScene } from './scenes/StatsGuideScene';
 import { CareerStatsScene } from './scenes/CareerStatsScene';
+import { TrainingMenuScene } from './scenes/TrainingMenuScene';
+import { AchievementsScene } from './scenes/AchievementsScene';
+import { AchievementToastScene } from './scenes/AchievementToastScene';
+import { getMeta } from './state/metaStore';
+import { getCareerStats } from './state/careerStatsStore';
+import { migrateAchievements } from './state/achievementsStore';
+
+const achievementMeta = getMeta();
+migrateAchievements({
+  starterGoals: Object.values(getCareerStats().allTime).filter(p => p.isStarter).reduce((sum, p) => sum + p.goals, 0),
+  zoneBossWins: achievementMeta.zoneBossWins,
+  tournamentWon: achievementMeta.bestTowerFloor >= 4 || achievementMeta.story.happyEnding || achievementMeta.story.restorationWins > 0 || achievementMeta.story.arceusDefeated,
+});
 
 // Dev deep-link: ?renderer=canvas forces the canvas renderer (for pixel tests).
 const params = new URLSearchParams(window.location.search);
@@ -39,10 +52,14 @@ class Preloader extends Phaser.Scene {
   // game never starts (this was the blank-screen bug).
   preload(): void {
     // Illustrated 16-bit archipelago artwork used by the actual overworld.
-    this.load.image('overworld-regions', new URL('./assets/overworld-regions-v2.png', import.meta.url).href);
+    this.load.image('overworld-regions', new URL('./assets/overworld-regions-v3.png', import.meta.url).href);
+    this.load.image('trainer-player', new URL('./assets/trainers/player.png', import.meta.url).href);
+    this.load.image('trainer-rival', new URL('./assets/trainers/rival.png', import.meta.url).href);
+    this.load.image('trainer-valen', new URL('./assets/trainers/valen.png', import.meta.url).href);
+    this.load.image('trainer-valen-revealed', new URL('./assets/trainers/valen-revealed.png', import.meta.url).href);
     // Every roster the campaign can ever show: the starting team plus all
     // campaign teams (poached players always have a sprite loaded).
-    const seen = new Set<number>();
+    const seen = new Set<number>([778, 493]);
     for (const t of [USER_TEAM, ...ALL_TEAMS]) {
       for (const p of t.players) seen.add(p.sprite);
     }
@@ -67,6 +84,7 @@ class Preloader extends Phaser.Scene {
   private launch(): void {
     if (this.launched) return;
     this.launched = true;
+    this.scene.launch('AchievementToastScene');
     this.scene.start('TitleScene');
   }
 }
@@ -84,8 +102,11 @@ const game = new Phaser.Game({
   scene: [
     Preloader,
     TitleScene,
+    TrainingMenuScene,
     StatsGuideScene,
     CareerStatsScene,
+    AchievementsScene,
+    AchievementToastScene,
     StarterSelectScene,
     DialogueScene,
     BalanceLabScene,

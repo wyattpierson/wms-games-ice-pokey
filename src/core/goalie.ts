@@ -9,7 +9,7 @@
  */
 
 import {
-  GOALIE_REPEAT_READ, GOALIE_RESPECT_GAIN, GOALIE_RESPECT_MAX,
+  SHOT_SPEED_MAX, GOALIE_REPEAT_READ, GOALIE_RESPECT_GAIN, GOALIE_RESPECT_MAX,
 } from '../config/gameplay';
 import type { MoveId } from './moves';
 
@@ -79,4 +79,39 @@ export function planGoalieResponse(i: GoalieReadInput): GoalieStance {
 /** Respect after being fooled once more. */
 export function respectAfterFool(respect: number): number {
   return Math.min(GOALIE_RESPECT_MAX, respect + GOALIE_RESPECT_GAIN);
+}
+
+/** Earliest segment/circle contact, including a segment starting inside. */
+export function segmentCircleContact(
+  start: { x: number; y: number }, end: { x: number; y: number },
+  centre: { x: number; y: number }, radius: number,
+): number | null {
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const ox = start.x - centre.x, oy = start.y - centre.y;
+  const c = ox * ox + oy * oy - radius * radius;
+  if (c <= 0) return 0;
+  const a = dx * dx + dy * dy;
+  if (a < 1e-12) return null;
+  const b = ox * dx + oy * dy;
+  const discriminant = b * b - a * c;
+  if (discriminant < 0) return null;
+  const t = (-b - Math.sqrt(discriminant)) / a;
+  return t >= 0 && t <= 1 ? t : null;
+}
+
+/**
+ * A positioned goalie stops most shots; coverage and puck sense improve the
+ * odds, while exceptional power can still beat it. One frame-independent roll.
+ */
+export function saveEncounterChance(
+  sense: number, speed: number,
+  start: { x: number; y: number }, end: { x: number; y: number },
+  centre: { x: number; y: number }, radius: number,
+): number {
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  const missDistance = length > 0 ? Math.abs(dx * (centre.y - start.y) - dy * (centre.x - start.x)) / length : radius;
+  const coverage = Math.max(0, 1 - missDistance / radius);
+  const powerPenalty = 0.1 * Math.max(0, speed / SHOT_SPEED_MAX - 1);
+  return Math.max(0.55, Math.min(0.98, 0.82 + 0.12 * sense + 0.12 * coverage - powerPenalty));
 }

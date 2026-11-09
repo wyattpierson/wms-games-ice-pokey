@@ -1,3 +1,5 @@
+import { storyPortrait } from '../ui/coachPortrait';
+import { getMeta } from '../state/metaStore';
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../config/rink';
 import { setStoryFlag } from '../state/metaStore';
@@ -7,7 +9,7 @@ import { FONT, THEME, hex } from '../ui/theme';
 export interface DialogueLine {
   speaker: string;
   text: string;
-  /** Optional future portrait. No story line uses portraits by default. */
+  /** Optional inline portrait override for an authored dialogue line. */
   portraitKey?: string;
   portraitScale?: number;
 }
@@ -44,8 +46,7 @@ export class DialogueScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(0x020610);
 
-    // A dark, quiet backdrop with an abstract signal/tower silhouette. There are
-    // deliberately no character sprites unless a future line explicitly opts in.
+    // Keep the distant Tower visible around the speaker and their partner.
     const ambience = this.add.graphics();
     ambience.fillStyle(0x020610, 1).fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
     ambience.fillStyle(0x102541, 0.24).fillCircle(GAME_WIDTH / 2, 245, 270);
@@ -77,13 +78,13 @@ export class DialogueScene extends Phaser.Scene {
     ambience.lineStyle(1, 0x739ac0, 0.18).lineBetween(0, 410, GAME_WIDTH, 410);
     ambience.fillStyle(0x030811, 0.96).fillRect(0, 410, GAME_WIDTH, GAME_HEIGHT - 410);
 
-    // Dialogue is the only bright, readable area; speaker portraits are opt-in per line.
+    // Portraits end above the dialogue frame so long lines stay readable.
     this.add.rectangle(GAME_WIDTH / 2, 510, 1012, 190, 0x071224, 0.98).setStrokeStyle(3, THEME.GOLD, 1);
     this.add.rectangle(GAME_WIDTH / 2, 510, 996, 174, 0x071224, 0).setStrokeStyle(1, 0x345a80, 1);
     this.add.rectangle(110, 420, 20, 3, THEME.GOLD, 1);
     this.add.rectangle(GAME_WIDTH - 110, 420, 20, 3, THEME.GOLD, 1);
 
-    this.add.text(GAME_WIDTH / 2, 435, 'DIALOGUE  /  SIGNAL RECEIVED', {
+    this.add.text(GAME_WIDTH / 2, 435, 'STORY', {
       fontFamily: FONT, fontSize: '12px', color: hex(THEME.DIM), letterSpacing: 2,
     }).setOrigin(0.5);
 
@@ -98,10 +99,32 @@ export class DialogueScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM),
     }).setOrigin(0.5);
 
+    const stage = this.add.container(0, 0).setDepth(1);
+    // Local art is smoothly sampled even though the game uses pixel-art sprites.
+    for (const key of ['trainer-player', 'trainer-rival', 'trainer-valen', 'trainer-valen-revealed']) {
+      if (this.textures.exists(key)) this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
     let portrait: Phaser.GameObjects.Image | null = null;
     const render = (): void => {
       const line = this.lines[this.index];
       const speakerName = (line?.speaker || 'UNKNOWN').toUpperCase();
+      stage.removeAll(true);
+      const visual = storyPortrait(line?.speaker || '', getMeta());
+      if (visual.texture && !line?.portraitKey) {
+        const glow = this.add.graphics();
+        glow.fillStyle(visual.sinister ? 0x752456 : 0x245b82, 0.22).fillEllipse(596, 270, 480, 270);
+        stage.add(glow);
+        if (visual.partner && this.textures.exists(`pkm-${visual.partner}`)) {
+          const partner = this.add.image(735, 276, `pkm-${visual.partner}`).setDisplaySize(264, 264);
+          stage.add(partner);
+        }
+        if (this.textures.exists(visual.texture)) {
+          const actor = this.add.image(visual.partner ? 550 : 596, 410, visual.texture).setOrigin(0.5, 1);
+          const height = visual.trainer ? 360 : 288;
+          actor.setScale(height / actor.height);
+          stage.add(actor);
+        }
+      }
       speaker.setText(speakerName);
       speaker.setColor(hex(speakerName === 'YOU' ? THEME.GREEN : speakerName === 'UNKNOWN' ? THEME.BLUE : THEME.GOLD));
       body.setText(line?.text || '');

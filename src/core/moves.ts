@@ -44,12 +44,10 @@ export interface MoveDef {
 export const MOVE_DEFS: Record<MoveId, MoveDef> = {
   // Fast + cheap: short tell, modest payoff.
   spin: { id: 'spin', tell: 0.3, effect: 0.22, dash: 720, knock: 260, knockRadius: 60, stagger: 0.3, headFrom: 0.95, headTo: 0, color: 0xff9f1c },
-  // Slow + big: long tell (easy to parry). A zig-zag SIDESTEP: it barely moves you toward the goal
-  // (≈10px) but slides you ≈115px across the ice (85–155 by skill) — the way to create a shooting
-  // angle on a goalie (and to get out of a defender's parry cone). Tuned numerically in the notes.
+  // Small outside fake, then one committed inside cut with modest forward travel.
   deke: {
     id: 'deke', tell: 0.5, effect: 0.32, dash: 580, knock: 280, knockRadius: 70, stagger: 0.4,
-    headFrom: 1.5, headTo: 1.5, zigAmp: 0.9, zigCycles: 1.5, color: 0xffd60a,
+    headFrom: -1.35, headTo: 1.35, color: 0xffd60a,
   },
   // Built but disabled (see ENABLED_MOVES).
   crossover: { id: 'crossover', tell: 0.35, effect: 0.18, dash: 760, knock: 280, knockRadius: 55, stagger: 0.3, headFrom: 0.9, headTo: 0.9, color: 0x4cc9f0 },
@@ -96,12 +94,17 @@ export function dashSpeedAt(dashSpeed: number, ph: number): number {
  * Heading (rad) of the dash `ph` (0..1) of the way through the effect phase.
  *   Spin  → swings out sideways then CURVES back round (you wrap around the defender
  *           and exit past them, still facing your aim);
- *   Deke  → a straight line at a fixed angle off the aim (it fakes the other way, then
- *           cuts — you exit angled off to the side).
- * `side` is +1/−1 and is chosen to go AWAY from the nearest defender.
+ *   Deke  → a small outside fake followed by a sustained inside cut.
+ * `side` is +1/−1: Deke cuts toward centre ice by default; Spin avoids the threat.
  */
 export function dashHeading(def: MoveDef, aim: number, side: 1 | -1, ph: number): number {
   const p = Math.max(0, Math.min(1, ph));
+  // With speed easing, this short opening yields ~10% outward / 90% inward
+  // lateral travel. The transition is continuous and never heads backward.
+  if (def.id === 'deke') {
+    const cut = Math.max(0, Math.min(1, (p - 0.055) / 0.08));
+    return aim + side * (def.headFrom + (def.headTo - def.headFrom) * cut * cut * (3 - 2 * cut));
+  }
   const smooth = p * p * (3 - 2 * p);
   // Zig-zag moves weave around the base line: starts leaning forward of it, swings back across it, …
   const zig = def.zigAmp ? -def.zigAmp * Math.cos(Math.PI * 2 * (def.zigCycles ?? 1) * p) : 0;

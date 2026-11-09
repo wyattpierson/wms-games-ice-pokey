@@ -1,3 +1,5 @@
+import { recordAchievementStarterGoal } from './achievementsStore';
+
 /** Persistent career totals and run history. Kept separate from the active campaign save. */
 export type CareerRunOutcome = 'loss' | 'forfeit' | 'victory';
 
@@ -142,6 +144,7 @@ export function recordCareerGoal(scoringTeam: 0 | 1, scorer?: CareerPlayerIdenti
   if (scoringTeam !== 0 || !scorer || scorer.goalie) { persist(); return; }
   ensureLine(store.currentRun.playerStats, scorer).goals += 1;
   ensureLine(store.allTime, scorer).goals += 1;
+  if (scorer.isStarter) recordAchievementStarterGoal();
   if (assister && !assister.goalie && careerPlayerKey(assister) !== careerPlayerKey(scorer)) {
     ensureLine(store.currentRun.playerStats, assister).assists += 1;
     ensureLine(store.allTime, assister).assists += 1;

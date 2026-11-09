@@ -59,7 +59,7 @@ export class OpponentSelectScene extends Phaser.Scene {
     wireShutdown(this);
     const W = GAME_WIDTH;
     const state = getRun();
-    if (getMeta().daysRemaining <= 0 && !getMeta().activeIslandId) { this.scene.start('ZoneSelectScene'); return; }
+    if (getMeta().daysRemaining <= 0) { this.scene.start('ZoneSelectScene'); return; }
 
     // A poach that was earned but never resolved (e.g. the page was refreshed on the poach
     // screen) is resumed rather than silently lost.
@@ -256,7 +256,7 @@ export class OpponentSelectScene extends Phaser.Scene {
 
   private launch(teamId: string): void {
     const meta = getMeta();
-    if (meta.daysRemaining <= 0 && !meta.activeIslandId) { this.scene.start('ZoneSelectScene'); return; }
+    if (meta.daysRemaining <= 0) { this.scene.start('ZoneSelectScene'); return; }
     const before = getRun();
     const team = teamById(teamId);
     const zone = resolveWorldZone(meta.activeIslandId || meta.selectedZoneId) || ZONES[0];

@@ -1,3 +1,5 @@
+import { STORY_RULES } from '../config/storyCampaign';
+import { settleSeason } from '../state/metaStore';
 import Phaser from 'phaser';
 import { getWorldState, resolveWorldZone } from '../core/worldState';
 import { addRetroChrome } from '../ui/chrome';
@@ -8,7 +10,7 @@ import { Menu, MenuButton } from '../ui/menu';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
 import { addRun, awardMatch, awardOpponentResource, beginNewYear, getMeta, isTournamentDue, recordZoneBossWin, setStoryFlag, updateMeta } from '../state/metaStore';
-import { TOWER_STAGES, ZONES } from '../config/progression';
+import { ZONES } from '../config/progression';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { STORY_BEATS, yearEndReflection, yearChampion, yearOpening } from '../config/story';
 import { ITEM_IDS } from '../config/progression';
@@ -37,6 +39,7 @@ export class ResultScene extends Phaser.Scene {
     const W = GAME_WIDTH;
     const win = data.userScore > data.opponentScore;
     const tournament = data.tournament === true;
+    const finalBoss = data.teamId === 'story-arceus';
     const towerFloor = data.towerFloor ?? getMeta().towerFloor;
     const champion = isChampion(data.teamId);
     const islandBoss = isIslandBoss(data.teamId);
@@ -45,12 +48,22 @@ export class ResultScene extends Phaser.Scene {
     const firstIslandResult = !state.results[data.teamId];
     // Record the outcome now (idempotent per run: recordResult throws if already faced).
     if (tournament) {
-      awardMatch(win, false, !!getRun().bench?.some(p => p.isStarter));
-      setRun(syncStarterEvolution(getRun()));
-      // Tournament results are tracked in meta, not campaign results. Clear the
-      // in-progress marker so returning to the map or closing the game isn't a false forfeit.
-      setRun({ ...getRun(), matchInProgress: undefined });
-      if (win) updateMeta({ towerFloor: towerFloor + 1, bestTowerFloor: Math.max(getMeta().bestTowerFloor || 0, towerFloor + 1) });
+      const resultFlag = `tournament-result-${getMeta().seasonYear}-${data.teamId}-${win ? 'win' : 'loss'}-${getRun().retryUsed ? 'retry' : 'first'}`;
+      if (!getMeta().flags.includes(resultFlag)) {
+        awardMatch(win, finalBoss, !!getRun().bench?.some(p => p.isStarter));
+        setRun({ ...syncStarterEvolution(getRun()), matchInProgress: undefined, gameOver: !win });
+        const meta = getMeta();
+        if (finalBoss) {
+          updateMeta({ story: { ...meta.story, arceusDefeated: win || meta.story.arceusDefeated, arceusAttemptYear: meta.seasonYear } });
+        } else if (win) {
+          updateMeta({ towerFloor: towerFloor + 1, bestTowerFloor: Math.max(meta.bestTowerFloor, towerFloor + 1),
+            bracket: meta.bracket ? { ...meta.bracket, completed: towerFloor + 1 } : null,
+            story: { ...meta.story, rivalBeaten: meta.story.rivalBeaten || towerFloor === 0,
+              mimikyuKnown: meta.story.mimikyuKnown || towerFloor + 1 >= STORY_RULES.mimikyuRevealAfterRound } });
+          if (towerFloor + 1 >= 4) settleSeason(true);
+        }
+        setStoryFlag(resultFlag);
+      }
     } else if (!state.results[data.teamId]) {
       setRun(recordResult(state, data.teamId, win ? 'win' : 'loss'));
       awardMatch(win, champion || islandBoss, !!getRun().bench?.some(p => p.isStarter));
@@ -67,7 +80,7 @@ export class ResultScene extends Phaser.Scene {
     }
     const afterResult = getRun();
     const retrySnapshot = afterResult.retrySnapshot;
-    const canRetry = !win && getMeta().unlocked.includes(ITEM_IDS.secondChance) && !afterResult.retryUsed && !!retrySnapshot && retrySnapshot.teamId === data.teamId && retrySnapshot.tournament === tournament;
+    const canRetry = !finalBoss && !win && getMeta().unlocked.includes(ITEM_IDS.secondChance) && !afterResult.retryUsed && !!retrySnapshot && retrySnapshot.teamId === data.teamId && retrySnapshot.tournament === tournament;
     const userTeam = getRun().userTeam;
     const lineup = userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie }));
     const winsBeforeEnd = Object.values(getRun().results).filter(r => r === 'win').length;
@@ -75,7 +88,7 @@ export class ResultScene extends Phaser.Scene {
       archiveCareerRun({ outcome: 'loss', teamName: userTeam.name, year: getMeta().seasonYear, lineup, lostTo: team.name,
         score: { for: data.userScore, against: data.opponentScore }, winsBeforeEnd });
       if (!canRetry) finishCareerMatch();
-    } else if (champion || (tournament && towerFloor + 1 >= TOWER_STAGES.length)) {
+    } else if (champion || (tournament && towerFloor + 1 >= 4)) {
       archiveCareerRun({ outcome: 'victory', teamName: userTeam.name, year: getMeta().seasonYear, lineup,
         score: { for: data.userScore, against: data.opponentScore }, winsBeforeEnd });
       finishCareerMatch();
@@ -84,7 +97,7 @@ export class ResultScene extends Phaser.Scene {
     addRetroChrome(this, THEME.GREEN);
 
     this.add
-      .text(W / 2, 130, win ? 'VICTORY!' : 'DEFEAT', {
+      .text(W / 2, 130, win ? (finalBoss ? 'WORLD RESTORED!' : 'VICTORY!') : 'DEFEAT', {
         fontFamily: FONT,
         fontSize: '52px',
         color: hex(win ? THEME.GOLD : THEME.RED),
@@ -93,7 +106,7 @@ export class ResultScene extends Phaser.Scene {
     this.add
       .text(
         W / 2, 188,
-        tournament ? (win ? (towerFloor + 1 >= TOWER_STAGES.length ? 'you conquered the year-end tournament' : `tower floor ${towerFloor + 1} cleared`) : 'your tournament ends here') : (win ? (champion ? 'the tower champion has fallen' : `${islandBoss ? 'island boss defeated: ' : 'you beat '}${team.name}`) : 'the run is over'),
+        finalBoss ? (win ? 'Arceus understands. The world is whole again.' : 'Arceus will be waiting next year.') : tournament ? (win ? (towerFloor + 1 >= 4 ? 'you conquered the year-end tournament' : `tournament round ${towerFloor + 1} won`) : 'your tournament ends here') : (win ? (champion ? 'the tower champion has fallen' : `${islandBoss ? 'island boss defeated: ' : 'you beat '}${team.name}`) : 'the run is over'),
         { fontFamily: FONT, fontSize: '17px', color: hex(THEME.DIM) },
       )
       .setOrigin(0.5);
@@ -108,22 +121,25 @@ export class ResultScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     let note = '';
-    if (tournament) note = win ? (towerFloor + 1 >= TOWER_STAGES.length ? 'the tournament is won. A new year awaits.' : 'the next floor is harder. Keep climbing.') : 'the tournament is over for this year.';
+    if (finalBoss) note = win ? 'Mimikyu and Arceus are free. Every island is restored.' : 'The final challenge stays unlocked. Prepare your team and return next year.';
+    else if (tournament) note = win ? (towerFloor + 1 >= 4 ? 'the tournament is won. A new year awaits.' : 'The bracket advances. Your next opponent awaits.') : 'the tournament is over for this year.';
     else if (win && islandBoss) note = 'Choose your boss reward on the next screen: recruit a Pokémon or claim this island’s unique resource.';
     else if (win && !champion && isTournamentDue() && !getMeta().activeIslandId) note = 'the season has run out. Return to the map; the tower is now open.';
     else if (win && !champion) note = 'choose one player to recruit to your bench. Your active lineup stays intact.';
     else if (win) note = 'first to 3 goals — the tower champion has fallen.';
-    else note = canRetry ? 'Your Second Chance Charm can replay this exact match once. It is consumed whether you win or lose the rematch.' : 'every match is a one-shot unless you have an unused Second Chance Charm.';
+    else note = canRetry ? 'Your Max Revive can replay this exact match once. It is consumed whether you win or lose the rematch.' : 'every match is a one-shot unless you have an unused Max Revive.';
     this.add.text(W / 2, 348, note, { fontFamily: FONT, fontSize: '15px', color: hex(THEME.GRAY) }).setOrigin(0.5);
 
     const buttons: MenuButton[] = [];
-    if (tournament) {
-      if (win && towerFloor + 1 >= TOWER_STAGES.length) {
+    if (finalBoss) {
+      buttons.push(new MenuButton(this, W / 2, 452, win ? 'RESTORE THE WORLD →' : 'NEXT YEAR · TRY AGAIN →', { color: THEME.GOLD, onSelect: () => win ? this.scene.start('VictoryScene') : this.startNextYearAfterLoss() }));
+    } else if (tournament) {
+      if (win && towerFloor + 1 >= 4) {
         buttons.push(new MenuButton(this, W / 2, 452, 'TOURNAMENT CHAMPION →', { color: THEME.GOLD, onSelect: () => { const story=yearChampion(getMeta().seasonYear); if(!getMeta().flags.includes(story.flag)) this.scene.start('DialogueScene',{nextScene:'VictoryScene',lines:story.lines,flag:story.flag}); else this.scene.start('VictoryScene'); } }));
       } else if (win) {
-        buttons.push(new MenuButton(this, W / 2, 452, 'NEXT FLOOR →', { color: THEME.GREEN, onSelect: () => this.scene.start('BattleTowerScene') }));
+        buttons.push(new MenuButton(this, W / 2, 452, 'NEXT ROUND →', { color: THEME.GREEN, onSelect: () => this.scene.start('BattleTowerScene') }));
       } else {
-        if (canRetry) buttons.push(new MenuButton(this, W / 2, 420, 'USE SECOND CHANCE · RETRY MATCH', { color: THEME.GOLD, onSelect: () => this.retryMatch(data.teamId) }));
+        if (canRetry) buttons.push(new MenuButton(this, W / 2, 420, 'USE MAX REVIVE · RETRY MATCH', { color: THEME.GOLD, onSelect: () => this.retryMatch(data.teamId) }));
         buttons.push(new MenuButton(this, W / 2, canRetry ? 480 : 452, 'END YEAR · NEW RUN →', { color: THEME.GREEN, onSelect: () => this.endTournamentYear(data.teamId) }));
       }
     } else if (win && islandBoss) {
@@ -147,7 +163,7 @@ export class ResultScene extends Phaser.Scene {
             this.scene.start(isTournamentDue() ? 'ZoneSelectScene' : 'OpponentSelectScene');
           },
         }),
-        new MenuButton(this, W / 2, 560, 'TAKE 3 CREDITS INSTEAD', {
+        new MenuButton(this, W / 2, 560, 'TAKE 3 BP INSTEAD', {
           color: THEME.GOLD,
           size: 17,
           onSelect: () => {
@@ -165,7 +181,7 @@ export class ResultScene extends Phaser.Scene {
         }),
       );
     } else {
-      if (canRetry) buttons.push(new MenuButton(this, W / 2, 414, 'USE SECOND CHANCE · RETRY MATCH', { color: THEME.GOLD, onSelect: () => this.retryMatch(data.teamId) }));
+      if (canRetry) buttons.push(new MenuButton(this, W / 2, 414, 'USE MAX REVIVE · RETRY MATCH', { color: THEME.GOLD, onSelect: () => this.retryMatch(data.teamId) }));
       buttons.push(
         new MenuButton(this, W / 2, canRetry ? 474 : 452, 'NEW RUN →', {
           color: THEME.GREEN,
@@ -215,8 +231,8 @@ export class ResultScene extends Phaser.Scene {
       });
       return;
     }
-    resetRun();
     beginNewYear();
+    resetRun();
     addRun();
     const freshRun = getRun();
     beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));

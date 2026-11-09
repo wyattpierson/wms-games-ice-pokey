@@ -59,9 +59,9 @@ describe('averageOverall', () => {
     expect(averageOverall([])).toBe(0);
   });
 
-  it('averages the members\' overalls (Knuckle Club)', () => {
-    // Hitmontop 83, Hitmonchan 76, Grapploct 80, Hariyama 79 -> 318/4 = 79.5 -> 80
-    expect(averageOverall(KNUCKLE_TEAM.players)).toBe(80);
+  it('averages the members\' overalls (Saffron Dojo)', () => {
+    // Hitmontop 76, Hitmonchan 76, Grapploct 80, Hariyama 79 -> 311/4 = 77.75 -> 78
+    expect(averageOverall(KNUCKLE_TEAM.players)).toBe(78);
   });
 });
 

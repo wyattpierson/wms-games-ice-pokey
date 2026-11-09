@@ -1,14 +1,13 @@
 import Phaser from 'phaser';
 import { addRetroChrome } from '../ui/chrome';
 import { GAME_WIDTH } from '../config/rink';
-import { TOWER_STAGES } from '../config/progression';
-import { ALL_TEAMS } from '../config/teams';
-import { startMatch } from '../core/campaign';
+import { startMatch, teamById } from '../core/campaign';
 import { getRun, setRun } from '../state/runStore';
-import { getMeta, isTournamentDue } from '../state/metaStore';
-import { resolveWorldZone } from '../core/worldState';
-import { ZONES } from '../config/progression';
-import { towerOpening } from '../config/story';
+import { getMeta, isTournamentDue, updateMeta } from '../state/metaStore';
+import { towerOpening, pendingStory, arceusOpening } from '../config/story';
+import { STORY_CHARACTERS } from '../config/storyCampaign';
+import { createBracket, bracketOpponent, ROUND_NAMES, ROUND_DIFFICULTY } from '../core/tournament';
+import { arceusAvailable, checkCatastrophe } from '../core/storyCampaign';
 import { TextButton } from '../ui/menu';
 import { FILL, FONT, THEME, hex } from '../ui/theme';
 import { wireShutdown } from '../ui/sceneLifecycle';
@@ -16,53 +15,65 @@ import { wireShutdown } from '../ui/sceneLifecycle';
 export class BattleTowerScene extends Phaser.Scene {
   private onKey: ((e: KeyboardEvent) => void) | null = null;
   constructor() { super('BattleTowerScene'); }
-
-  create(): void {
+  create(data?: { finalBoss?: boolean }): void {
     wireShutdown(this);
-    this.cameras.main.setBackgroundColor(FILL.background);
-    addRetroChrome(this, THEME.RED);
-    const meta = getMeta();
-    this.add.text(GAME_WIDTH / 2, 48, 'BATTLE TOWER', { fontFamily: FONT, fontSize: '32px', color: hex(THEME.GOLD) }).setOrigin(.5);
-    this.add.text(GAME_WIDTH / 2, 86, `YEAR ${meta.seasonYear} · ${meta.daysRemaining} DAYS REMAINING`, { fontFamily: FONT, fontSize: '15px', color: hex(THEME.RED) }).setOrigin(.5);
-
-    if (isTournamentDue()) {
-      const clearedBosses = ZONES.map(base => resolveWorldZone(base.id) || base).filter(zone => getRun().results[zone.bossId] === 'win').length;
-      const story = towerOpening(meta.seasonYear, clearedBosses);
-      if(!meta.flags.includes(story.flag)){ this.scene.start('DialogueScene',{nextScene:'BattleTowerScene',lines:story.lines,flag:story.flag}); return; }
-    }
-
-    if (!isTournamentDue()) {
-      this.add.text(GAME_WIDTH / 2, 245, 'THE GATES ARE SEALED', { fontFamily: FONT, fontSize: '27px', color: hex(THEME.RED) }).setOrigin(.5);
-      this.add.text(GAME_WIDTH / 2, 292, 'The Battle Tower opens when the year ends. Spend your remaining days wisely.', { fontFamily: FONT, fontSize: '15px', color: hex(THEME.DIM), align: 'center', wordWrap: { width: 780 } }).setOrigin(.5);
-      new TextButton(this, GAME_WIDTH / 2, 390, 'BACK TO THE ISLANDS', { color: THEME.BLUE, minWidth: 250, onSelect: () => this.scene.start('ZoneSelectScene') });
-      const onKey = (e: KeyboardEvent) => { if (e.code === 'Escape') this.scene.start('ZoneSelectScene'); };
-      this.onKey = onKey; window.addEventListener('keydown', onKey); return;
-    }
-
-    const floor = Math.min(meta.towerFloor, TOWER_STAGES.length - 1);
-    const stage = TOWER_STAGES[floor];
-    this.add.text(GAME_WIDTH / 2, 120, 'The year-end tournament. One continuous ladder. No opponent selection.', { fontFamily: FONT, fontSize: '14px', color: hex(THEME.DIM) }).setOrigin(.5);
-    TOWER_STAGES.forEach((s, i) => {
-      const x = GAME_WIDTH / 2 + (i - (TOWER_STAGES.length - 1) / 2) * 180, y = 245;
-      const active = i === floor, cleared = i < meta.towerFloor;
-      this.add.rectangle(x, y, 150, 72, FILL.plate, 1).setStrokeStyle(2, active ? THEME.GOLD : cleared ? THEME.GREEN : THEME.DIM);
-      this.add.text(x, y - 9, cleared ? '✓ CLEARED' : s.name, { fontFamily: FONT, fontSize: '14px', color: hex(cleared ? THEME.GREEN : active ? THEME.GOLD : THEME.DIM) }).setOrigin(.5);
-      this.add.text(x, y + 15, `THREAT ${Math.round(s.difficulty * 100)}%`, { fontFamily: FONT, fontSize: '11px', color: hex(THEME.DIM) }).setOrigin(.5);
-    });
-    const team = ALL_TEAMS.find(t => t.id === stage.opponentId)!;
-    this.add.text(GAME_WIDTH / 2, 420, `NEXT: ${stage.name} · ${team.name} · THREAT ${Math.round(stage.difficulty * 100)}%`, { fontFamily: FONT, fontSize: '16px', color: hex(THEME.WHITE) }).setOrigin(.5);
-    const launch = () => {
-      // Keep this year's island clears and recruitment history intact. Tower fights
-      // use their own stable team IDs and do not consume or rewrite island results.
-      const current = getRun();
-      const state = startMatch(current, team.id, { level: stage.difficulty, tournament: true, towerFloor: floor });
+    let meta = getMeta();
+    if (data?.finalBoss) {
+      if (!arceusAvailable(meta.story, meta.seasonYear)) { this.scene.start('ZoneSelectScene'); return; }
+      const flag = 'story-arceus-challenge';
+      if (!meta.flags.includes(flag)) { this.scene.start('DialogueScene', { lines: arceusOpening(), flag, nextScene: 'BattleTowerScene', nextData: data }); return; }
+      const state = startMatch(getRun(), 'story-arceus', { level: 1, tournament: true, towerFloor: 4 });
       setRun(state);
-      this.scene.start('GameScene', { userTeam: state.userTeam, opponent: team, level: stage.difficulty, towerFloor: floor, tournament: true });
+      this.scene.start('GameScene', { userTeam: state.userTeam, opponent: teamById('story-arceus'), level: 1, tournament: true, towerFloor: 4 });
+      return;
+    }
+    if (!isTournamentDue()) { this.scene.start('ZoneSelectScene'); return; }
+    if (meta.story.settledYear === meta.seasonYear) { this.scene.start(meta.towerFloor >= 4 ? 'VictoryScene' : 'GameOverScene'); return; }
+    if (!meta.bracket || meta.bracket.year !== meta.seasonYear) {
+      updateMeta({ bracket: createBracket(meta.seasonYear, meta.story.rivalBeaten), towerFloor: 0 });
+    }
+    updateMeta({ activeIslandId: null, story: checkCatastrophe({ ...getMeta().story, towerVisited: true }) });
+    meta = getMeta();
+    const beat = pendingStory() || (!meta.flags.includes(`story-year-${meta.seasonYear}-tower-open`) ? towerOpening(meta.seasonYear, 0) : undefined);
+    if (beat) { this.scene.start('DialogueScene', { nextScene: 'BattleTowerScene', lines: beat.lines, flag: beat.flag }); return; }
+    this.cameras.main.setBackgroundColor(FILL.background);
+    addRetroChrome(this, THEME.GOLD);
+    this.add.text(GAME_WIDTH / 2, 40, `YEAR ${meta.seasonYear} · CHAMPIONSHIP`, { fontFamily: FONT, fontSize: '28px', color: hex(THEME.GOLD) }).setOrigin(.5);
+    const bracket = meta.bracket!;
+    const floor = bracket.completed;
+    const label = (id: string) => id === 'player' ? getRun().userTeam.name : id === 'story-villain' && !meta.story.catastrophe ? '???' : id === 'story-rival' ? STORY_CHARACTERS.rival.name : teamById(id).name;
+    const graphics = this.add.graphics().lineStyle(1, 0x52657b);
+    // Full 16 → 8 → 4 → 2 bracket; outcomes are revealed as the player advances.
+    bracket.rounds.forEach((round, r) => {
+      const x = 130 + r * 280;
+      this.add.text(x, 82, ROUND_NAMES[r], { fontFamily: FONT, fontSize: '13px', color: hex(r === floor ? THEME.GOLD : THEME.DIM) }).setOrigin(.5);
+      const spacing = 440 / round.length;
+      round.forEach((id, i) => {
+        const y = 110 + spacing * (i + .5);
+        const visible = r <= floor;
+        const text = visible ? label(id) : '—';
+        this.add.rectangle(x, y, 236, 24, FILL.plate).setStrokeStyle(1, visible && id === 'player' ? THEME.GOLD : 0x52657b);
+        this.add.text(x, y, text, { fontFamily: FONT, fontSize: '11px', color: hex(visible && id === 'player' ? THEME.GOLD : THEME.WHITE) }).setOrigin(.5);
+        if (r < 3) {
+          const nextY = 110 + spacing * 2 * (Math.floor(i / 2) + .5);
+          graphics.lineBetween(x + 118, y, x + 140, y);
+          graphics.lineBetween(x + 140, y, x + 140, nextY);
+          graphics.lineBetween(x + 140, nextY, x + 162, nextY);
+        }
+      });
+    });
+    this.add.text(GAME_WIDTH / 2, 580, `NEXT: ${ROUND_NAMES[floor]} · ${label(bracketOpponent(bracket))}`, { fontFamily: FONT, fontSize: '17px', color: hex(THEME.GOLD) }).setOrigin(.5);
+    let launched = false;
+    const launch = () => {
+      if (launched) return; launched = true;
+      const team = teamById(bracketOpponent(bracket));
+      const state = startMatch(getRun(), team.id, { level: ROUND_DIFFICULTY[floor], tournament: true, towerFloor: floor });
+      setRun(state);
+      this.scene.start('GameScene', { userTeam: state.userTeam, opponent: team, level: ROUND_DIFFICULTY[floor], towerFloor: floor, tournament: true });
     };
-    new TextButton(this, GAME_WIDTH / 2, 485, 'CLIMB THE TOWER', { color: THEME.GREEN, minWidth: 250, onSelect: launch });
-    new TextButton(this, GAME_WIDTH / 2, 545, 'BACK TO ZONES', { color: THEME.GRAY, minWidth: 220, onSelect: () => this.scene.start('ZoneSelectScene') });
-    const onKey = (e: KeyboardEvent) => { if (e.code === 'Escape') this.scene.start('ZoneSelectScene'); if (e.code === 'Enter' || e.code === 'Space') launch(); };
-    this.onKey = onKey; window.addEventListener('keydown', onKey);
+    new TextButton(this, GAME_WIDTH / 2, 625, 'PLAY NEXT ROUND', { color: THEME.GREEN, minWidth: 250, onSelect: launch });
+    this.onKey = e => { if (e.code === 'Enter' || e.code === 'Space') launch(); };
+    window.addEventListener('keydown', this.onKey);
   }
   shutdown(): void { if (this.onKey) window.removeEventListener('keydown', this.onKey); this.onKey = null; }
 }

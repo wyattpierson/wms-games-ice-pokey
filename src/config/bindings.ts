@@ -5,9 +5,10 @@
  * Swap the whole scheme here without touching game logic.
  */
 
-export type Action = 'pass' | 'shoot' | 'spin' | 'crossover' | 'deke';
+export type Action = 'pass' | 'bankPass' | 'shoot' | 'spin' | 'crossover' | 'deke';
 
 export const ACTION_KEYS: Record<Action, string[]> = {
+  bankPass: ['B'], // TM U-turn bank pass: Up/Down chooses the board
   pass: ['SPACE'], // offense: pass · defense: switch controlled defender
   shoot: ['SHIFT', 'ENTER'], // offense: hold to charge, release in the window to shoot · defense: CHECK (block — never steals)
   // The FIRST key is the primary (shown in the on-screen key hint); the rest are alternates.

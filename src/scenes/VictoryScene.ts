@@ -1,3 +1,5 @@
+import { arceusAvailable } from '../core/storyCampaign';
+import { pendingStory } from '../config/story';
 import Phaser from 'phaser';
 import { getWorldState } from '../core/worldState';
 import { addRetroChrome } from '../ui/chrome';
@@ -21,13 +23,15 @@ export class VictoryScene extends Phaser.Scene {
 
   create(): void {
     wireShutdown(this);
+    const beat = pendingStory();
+    if (beat) { this.scene.start('DialogueScene', { nextScene: 'VictoryScene', lines: beat.lines, flag: beat.flag }); return; }
     const W = GAME_WIDTH;
     const state = getRun();
     this.cameras.main.setBackgroundColor(FILL.background);
     addRetroChrome(this, THEME.GOLD);
 
     this.add
-      .text(W / 2, 96, 'YEAR-END CHAMPION!', { fontFamily: FONT, fontSize: '52px', color: hex(THEME.GOLD) })
+      .text(W / 2, 96, getMeta().story.arceusDefeated ? 'WORLD RESTORED!' : 'YEAR-END CHAMPION!', { fontFamily: FONT, fontSize: '52px', color: hex(THEME.GOLD) })
       .setOrigin(0.5);
     this.add
       .text(W / 2, 142, 'You conquered the Battle Tower. A new year awaits.', {
@@ -42,8 +46,8 @@ export class VictoryScene extends Phaser.Scene {
     const newRun = new MenuButton(this, W / 2, 540, 'NEXT YEAR →', {
       color: THEME.GREEN,
       onSelect: () => {
-        resetRun();
         beginNewYear();
+        resetRun();
         addRun();
         const freshRun = getRun();
         beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));
@@ -56,7 +60,9 @@ export class VictoryScene extends Phaser.Scene {
       size: 18,
       onSelect: () => this.scene.start('TitleScene'),
     });
-    this.menu = new Menu(this, [newRun, menu]);
+    const buttons = [newRun, menu];
+    if (arceusAvailable(getMeta().story, getMeta().seasonYear)) buttons.unshift(new MenuButton(this, W / 2, 490, 'FACE ARCEUS · FINAL BOSS', { color: THEME.GOLD, onSelect: () => this.scene.start('BattleTowerScene', { finalBoss: true }) }));
+    this.menu = new Menu(this, buttons);
 
     const onKey = (e: KeyboardEvent) => {
       switch (e.code) {

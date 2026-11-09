@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { USER_TEAM } from '../config/teams';
+import { ALL_TEAMS, USER_TEAM } from '../config/teams';
 import { newRun, recordResult, startMatch, applyPoach, type CampaignState as S } from './campaign';
 import { parseRun, serializeRun, SAVE_VERSION } from './runSave';
 
@@ -11,6 +11,22 @@ function mutate(state: S, fn: (draft: any) => void): string {
 }
 
 describe('serializeRun / parseRun round trip', () => {
+  it('corrects old recruited stats in the lineup, bench, and retry snapshot without losing starter bonuses', () => {
+    const articuno = ALL_TEAMS.find(team => team.id === 'sky-raiders-summit')!.players.find(player => player.name === 'Articuno')!;
+    const stale = { ...articuno, stats: { hp: 74, attack: 59, specialAttack: 79, defense: 79, specialDefense: 85, speed: 75 } };
+    const s = newRun();
+    s.userTeam.players[0] = stale;
+    s.userTeam.players[2] = { ...s.userTeam.players[2], isStarter: true, stats: { ...s.userTeam.players[2].stats, hp: 123 } };
+    s.bench = [stale];
+    const withRetry = startMatch(s, 'knuckle-club');
+    const restored = parseRun(serializeRun(withRetry))!;
+    expect(restored.userTeam.players[0].stats).toEqual(articuno.stats);
+    expect(restored.bench[0].stats).toEqual(articuno.stats);
+    expect(restored.retrySnapshot!.userTeam.players[0].stats).toEqual(articuno.stats);
+    expect(restored.retrySnapshot!.bench[0].stats).toEqual(articuno.stats);
+    expect(restored.userTeam.players[2].stats.hp).toBe(123);
+  });
+
   it('a fresh run survives the round trip', () => {
     const s = newRun();
     expect(parseRun(serializeRun(s))).toEqual(s);

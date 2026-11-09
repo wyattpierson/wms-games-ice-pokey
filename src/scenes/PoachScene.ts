@@ -123,7 +123,7 @@ export class PoachScene extends Phaser.Scene {
     resource(this.add.text(cx, 347, bossZone?.resourceDescription || '', T(13, THEME.GRAY, { align: 'center', wordWrap: { width: 310 }, lineSpacing: 5 })).setOrigin(.5, 0));
     resource(this.add.rectangle(cx, 420, 320, 1, 0x34465a));
     resource(this.add.text(cx, 441, `IN COLLECTION: ${bossZone ? getMeta().islandResources[bossZone.id] || 0 : 0}`, T(11, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(.5));
-    resource(this.add.text(cx, 480, 'Spend in the Item Shop. Kept between years.\nReplaces this boss’s Pokémon recruit.', T(11, THEME.GRAY, { align: 'center', wordWrap: { width: 320 }, lineSpacing: 5 })).setOrigin(.5));
+    resource(this.add.text(cx, 480, 'Spend in the Poké Mart. Kept between years.\nReplaces this boss’s Pokémon recruit.', T(11, THEME.GRAY, { align: 'center', wordWrap: { width: 320 }, lineSpacing: 5 })).setOrigin(.5));
 
     this.confirmButton = new TextButton(this, cx, 535, 'RECRUIT PLAYER', { color: THEME.GREEN, minWidth: 332, onSelect: () => this.confirmReward(this.selected) });
     new TextButton(this, cx - 85, 582, 'STATS GUIDE [G]', { size: 11, color: THEME.BLUE, minWidth: 162, onSelect: () => this.openStatsGuide() });

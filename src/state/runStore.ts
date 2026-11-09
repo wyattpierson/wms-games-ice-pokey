@@ -63,9 +63,11 @@ export function setRun(next: CampaignState): void {
   writeSave();
 }
 
-/** Start a brand-new run (called from the title screen / end-of-run screens). */
+/** Start a fresh season while keeping the player's chosen team identity. */
 export function resetRun(): CampaignState {
+  const teamName = state.userTeam.name;
   state = newRun();
+  state.userTeam.name = teamName;
   runExists = true;
   writeSave();
   return state;

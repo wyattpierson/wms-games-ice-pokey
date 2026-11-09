@@ -19,6 +19,7 @@ type LoadoutTab = 'powers' | 'items';
 const STARTERS: StarterId[] = ['larvitar', 'gible', 'bagon'];
 const STARTER_LABELS: Record<StarterId, string> = { larvitar: 'TYRANITAR', gible: 'GARCHOMP', bagon: 'SALAMENCE' };
 const ITEM_TEST_DESCRIPTIONS: Record<string, string> = {
+  [ITEM_IDS.wallPass]: 'B: bank pass · Up/Down chooses top/bottom board',
   [ITEM_IDS.evolvePikachu]: 'Pikachu → Raichu · permanent species upgrade',
   [ITEM_IDS.evolvePsyduck]: 'Psyduck → Golduck · permanent species upgrade',
   [ITEM_IDS.secondChance]: 'Retry a lost test match once',
@@ -100,7 +101,7 @@ export class BalanceLabScene extends Phaser.Scene {
     this.add.rectangle(GAME_WIDTH / 2, 449, 1096, 206, FILL.panel, 1).setStrokeStyle(1, 0x34465a);
     this.powersPanel = this.add.container(0, 0).setDepth(20);
     this.add.text(68, 366, 'MATCH LOADOUT', T(10, THEME.GOLD, { fontStyle: 'bold' })).setOrigin(0, .5);
-    this.createLoadoutTab(300, 366, 'POWERS', 'powers', 104);
+    this.createLoadoutTab(300, 366, 'TECHNIQUES', 'powers', 128);
     this.createLoadoutTab(456, 366, 'PERMANENT ITEMS', 'items', 174);
     this.refreshLoadoutTabs();
     this.selectedTabText = this.add.text(1124, 366, '', T(10, THEME.DIM)).setOrigin(1, .5);
@@ -253,7 +254,7 @@ export class BalanceLabScene extends Phaser.Scene {
     this.powersPanel.removeAll(true);
     const items = SHOP_OFFERS.filter(o => o.kind === 'item');
     this.selectedTabText.setText(this.loadoutTab === 'powers'
-      ? 'Toggle powers for this match only'
+      ? 'Test techniques · this match only'
       : 'All items testable here · no save unlock required');
     const add = (obj: Phaser.GameObjects.GameObject) => this.powersPanel.add(obj);
     if (this.loadoutTab === 'powers') {
@@ -282,11 +283,11 @@ export class BalanceLabScene extends Phaser.Scene {
         label.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.selectMegaStarter(starter));
       });
       items.forEach((item, i) => {
-        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 328 : 864, y = 427 + row * 34;
+        const col = i % 2, row = Math.floor(i / 2), x = col === 0 ? 328 : 864, y = 422 + row * 29;
         const id = item.id;
         const selected = this.selectedItemIds.has(id), focused = i === this.itemIndex;
         const labelText = ITEM_TEST_DESCRIPTIONS[id] || item.description;
-        const frame = this.add.rectangle(x, y, 520, 30, selected ? 0x16372f : FILL.plate, 1)
+        const frame = this.add.rectangle(x, y, 520, 28, selected ? 0x16372f : FILL.plate, 1)
           .setStrokeStyle(focused ? 2 : 1, selected ? THEME.GREEN : focused ? THEME.GOLD : THEME.DIM);
         const label = this.add.text(x - 246, y - 12, `${selected ? '✓' : '○'}  ${item.name}`, T(11, selected ? THEME.GREEN : THEME.WHITE, { fontStyle: 'bold' }));
         const description = this.add.text(x - 246, y + 2, labelText, T(10, THEME.GRAY));

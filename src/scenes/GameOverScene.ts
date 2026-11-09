@@ -62,7 +62,7 @@ export class GameOverScene extends Phaser.Scene {
       color: THEME.GREEN,
       onSelect: () => this.requestNextYear(),
     });
-    const shop = new MenuButton(this, W / 2, 584, 'ITEM SHOP', {
+    const shop = new MenuButton(this, W / 2, 584, 'POKÉ MART', {
       color: THEME.GOLD,
       size: 18,
       onSelect: () => this.scene.start('StoreScene', { returnTo: 'GameOverScene' }),
@@ -114,8 +114,8 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   private advanceYear(): void {
-    resetRun();
     beginNewYear();
+    resetRun();
     addRun();
     const freshRun = getRun();
     beginCareerRun(freshRun.userTeam.name, getMeta().seasonYear, freshRun.userTeam.players.map(p => ({ name: p.name, sprite: p.sprite, isStarter: p.isStarter, goalie: p.goalie })));

@@ -48,7 +48,7 @@ export class PauseOverlay {
     const mainSub = scene.add.text(W / 2, 160, `vs ${opponentName}`, { fontFamily: FONT, fontSize: '15px', color: hex(THEME.DIM) }).setOrigin(.5);
     const resume = new MenuButton(scene, W / 2, 210, 'RESUME MATCH', { color: THEME.GREEN, onSelect: () => this.onResume() });
     const controls = new MenuButton(scene, W / 2, 255, 'VIEW CONTROLS  (C)', { color: THEME.BLUE, size: 20, onSelect: () => this.showPage('controls') });
-    const team = new MenuButton(scene, W / 2, 300, 'TEAM, STARTER & POWERS  (I)', { color: THEME.GOLD, size: 20, onSelect: () => this.showPage('team') });
+    const team = new MenuButton(scene, W / 2, 300, 'TEAM, STARTER & TECHNIQUES  (I)', { color: THEME.GOLD, size: 20, onSelect: () => this.showPage('team') });
     const stats = new MenuButton(scene, W / 2, 345, 'CAREER STATS  (V)', { color: THEME.BLUE, size: 20, onSelect: () => this.showPage('stats') });
     const forfeit = new MenuButton(scene, W / 2, 399, 'FORFEIT RUN  (F)', { color: THEME.RED, size: 20, onSelect: () => this.confirmForfeit() });
     const quit = new MenuButton(scene, W / 2, 448, 'QUIT TO TITLE  (Q)', { color: THEME.GRAY, size: 20, onSelect: () => this.confirmQuit() });
@@ -57,7 +57,7 @@ export class PauseOverlay {
     this.menu = new Menu(scene, [
       { text: 'RESUME MATCH', enabled: true, color: THEME.GREEN, highlight: on => resume.highlight(on), onSelect: () => this.onResume() },
       { text: 'VIEW CONTROLS', enabled: true, color: THEME.BLUE, highlight: on => controls.highlight(on), onSelect: () => this.showPage('controls') },
-      { text: 'TEAM / POWERS', enabled: true, color: THEME.GOLD, highlight: on => team.highlight(on), onSelect: () => this.showPage('team') },
+      { text: 'TEAM / TECHNIQUES', enabled: true, color: THEME.GOLD, highlight: on => team.highlight(on), onSelect: () => this.showPage('team') },
       { text: 'CAREER STATS', enabled: true, color: THEME.BLUE, highlight: on => stats.highlight(on), onSelect: () => this.showPage('stats') },
       { text: 'FORFEIT RUN', enabled: true, color: THEME.RED, highlight: on => forfeit.highlight(on), onSelect: () => this.confirmForfeit() },
       { text: 'QUIT TO TITLE', enabled: true, color: THEME.GRAY, highlight: on => quit.highlight(on), onSelect: () => this.confirmQuit() },
@@ -74,7 +74,7 @@ export class PauseOverlay {
     ];
     const controlsRows: string[][] = [
       ['WASD / ARROW KEYS','Move your skater'],
-      ['SPACE','Pass with the puck · switch defender without it'],
+      ['SPACE / B','Space: pass / switch · B: bank pass (TM U-turn), Up/Down: board'],
       ['SHIFT or ENTER','Hold to charge and release to shoot · check on defense'],
       ['E','Spin juke on offense · parry / counter on defense'],
       ['F','Deke on offense · parry / counter on defense'],
@@ -104,7 +104,7 @@ export class PauseOverlay {
       scene.add.rectangle(382,337,466,382,0x102236,1).setStrokeStyle(1,0x32485c),
       scene.add.rectangle(852,337,440,382,0x102236,1).setStrokeStyle(1,0x32485c),
       scene.add.text(382,153,'ACTIVE LINEUP',{fontFamily:FONT,fontSize:'14px',color:hex(THEME.GREEN),fontStyle:'bold'}).setOrigin(.5),
-      scene.add.text(852,153,'POWERS & UNLOCKS',{fontFamily:FONT,fontSize:'14px',color:hex(THEME.BLUE),fontStyle:'bold'}).setOrigin(.5),
+      scene.add.text(852,153,'TECHNIQUES & UNLOCKS',{fontFamily:FONT,fontSize:'14px',color:hex(THEME.BLUE),fontStyle:'bold'}).setOrigin(.5),
     ];
     userTeam.players.forEach((p, i) => {
       const y = 185 + i * 40;
@@ -135,7 +135,7 @@ export class PauseOverlay {
       teamParts.push(scene.add.text(644,y+16,power.description,{fontFamily:FONT,fontSize:'9px',color:hex(THEME.WHITE),wordWrap:{width:397},lineSpacing:2}));
     });
     teamParts.push(scene.add.rectangle(852,389,400,1,0x32485c,1));
-    teamParts.push(scene.add.text(644,406,campaignMode ? 'UNLOCKED ITEM SHOP ITEMS' : 'ACTIVE BALANCE LAB ITEMS',{fontFamily:FONT,fontSize:'10px',color:hex(THEME.BLUE),fontStyle:'bold'}));
+    teamParts.push(scene.add.text(644,406,campaignMode ? 'UNLOCKED POKÉ MART ITEMS' : 'ACTIVE BALANCE LAB ITEMS',{fontFamily:FONT,fontSize:'10px',color:hex(THEME.BLUE),fontStyle:'bold'}));
     const owned = SHOP_OFFERS.filter(o => campaignMode ? meta.unlocked.includes(o.unlock || o.id) : this.testItemIds.includes(o.unlock || o.id));
     teamParts.push(scene.add.text(644,430,owned.length?owned.map(o=>o.name).join('  ·  '):(campaignMode?'No shop items unlocked yet.':'No test items enabled.'),{fontFamily:FONT,fontSize:'10px',color:hex(THEME.WHITE),wordWrap:{width:395},lineSpacing:3}));
     teamParts.push(scene.add.text(644,478,campaignMode ? 'Permanent items are active in campaign matches. Mega Evolution is available with M when unlocked and your starter is fully evolved.' : 'These item toggles are temporary for this Balance Lab match only; they do not change your saved unlocks.',{fontFamily:FONT,fontSize:'9px',color:hex(THEME.DIM),wordWrap:{width:395}}));

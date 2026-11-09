@@ -23,12 +23,12 @@ const GRAVE = 'grave-diggers';
 const SPARKLE = 'sparkle-squad';
 const CHAMPION = 'sky-raiders';
 
-/** A fresh run with the first match (vs Knuckle Club) already started. */
+/** A fresh run with the first match (vs Saffron Dojo) already started. */
 function startedRun(): CampaignState {
   return startMatch(newRun(), KNUCKLE);
 }
 
-/** A fresh run where Knuckle Club has just been beaten and awaits a poach. */
+/** A fresh run where Saffron Dojo has just been beaten and awaits a poach. */
 function wonRun(): CampaignState {
   return recordResult(startedRun(), KNUCKLE, 'win');
 }
@@ -95,7 +95,7 @@ describe('startMatch / abandonMatch', () => {
   });
 });
 
-describe('Second Chance Charm retry state', () => {
+describe('Max Revive retry state', () => {
   it('replays the same match once, restoring match-start results and roster', () => {
     const before = startMatch(newRun(), KNUCKLE, { level: 0.62, tournament: false });
     const lost = recordResult(before, KNUCKLE, 'loss');
